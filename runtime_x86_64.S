@@ -73,7 +73,7 @@ __builtin_print_int:
   andq $-16, %rsp
 
   # Invoke printf.
-  leaq  printf_format(%rip), %rdi
+  leaq  printf_format_int(%rip), %rdi
   movq  16(%rbp), %rsi
   callq printf
   xorq  %rcx, %rcx
@@ -90,7 +90,7 @@ __builtin_print_int:
   retq
 
   .data
-printf_format:
+printf_format_int:
   .string "%d\n"
 
   .data
@@ -102,7 +102,52 @@ __builtin_print_int_closure:
 
 
 ################################################################################
-# __builtin_print_int
+# __builtin_print_bool
+################################################################################
+  .text
+  .global __builtin_print_bool
+__builtin_print_bool:
+  # Save previous frame.
+  pushq %rbp
+  movq %rsp, %rbp
+  pushq %rax
+
+  # Align the stack to a 16-byte boundary.
+  movq %rsp, %rbx
+  subq $16, %rsp
+  andq $-16, %rsp
+
+  # Invoke printf.
+  leaq  printf_format_bool(%rip), %rdi
+  movq  16(%rbp), %rsi
+  callq printf
+  xorq  %rcx, %rcx
+
+  # Restore previous frame.
+  movq %rbx, %rsp
+  popq %rax
+  popq %rbp
+
+  # Pop the argument to the function.
+  popq %rdx
+  addq $8, %rsp
+  pushq %rdx
+  retq
+
+  .data
+printf_format_bool:
+  .string "%d\n"
+
+  .data
+  .global __builtin_print_bool_closure
+  .quad 0
+__builtin_print_bool_closure:
+  .quad __builtin_print_bool
+
+
+
+################################################################################
+# __builtin_allocate
 ################################################################################
   .text
   .global __builtin_allocate
@@ -131,4 +176,4 @@ __builtin_allocate:
 
   popq %rax
   popq %rbp
-  retq
+        retq

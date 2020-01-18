@@ -22,6 +22,8 @@ module IdentMap = Map.Make(String)
 type ty
   (* Basic integer type *)
   = TyInt
+  (* Basic boolean type *)
+  | TyBool
   (* Unit type for functions with no return *)
   | TyUnit
   (* Function type *)
@@ -47,6 +49,7 @@ type type_scope
 let rec occurs loc r ty
   = match ty with
   | TyInt -> ()
+  | TyBool -> ()
   | TyUnit -> ()
   | TyArr(params, ret) ->
      occurs loc r ret;
@@ -93,6 +96,7 @@ let new_ty_var () =
 let rec generalise ty
   = match ty with
   | TyInt -> ty
+  | TyBool -> ty
   | TyUnit -> ty
   | TyArr(params, ret) -> TyArr(Array.map generalise params, generalise ret)
   | TyAbs _ -> failwith "should have been instantiated"
@@ -104,6 +108,7 @@ let instantiate ty =
   let abs_context = Hashtbl.create 5 in
   let rec loop ty = match ty with
     | TyInt -> ty
+    | TyBool -> ty
     | TyUnit -> ty
     | TyArr(params, ret) -> TyArr(Array.map loop params, loop ret)
     | TyAbs id ->
@@ -163,6 +168,8 @@ let rec check_expr scope expr
      in find_name scope
   | IntExpr(loc, i) ->
      Typed_ast.IntExpr(loc, i), TyInt
+  | BoolExpr(loc, b) ->
+     Typed_ast.BoolExpr(loc, b), TyBool
   | AddExpr(loc, lhs, rhs) ->
      let lhs', ty_lhs = check_expr scope lhs in
      unify loc ty_lhs TyInt;
@@ -175,6 +182,29 @@ let rec check_expr scope expr
      let rhs', ty_rhs = check_expr scope rhs in
      unify loc ty_rhs TyInt;
      Typed_ast.SubExpr(loc, lhs', rhs'), TyInt
+  | EqualExpr(loc, lhs, rhs) ->
+     let ty = new_ty_var () in
+     let lhs', ty_lhs = check_expr scope lhs in
+     unify loc ty_lhs ty;
+     let rhs', ty_rhs = check_expr scope rhs in
+     unify loc ty_rhs ty;
+     Typed_ast.EqualExpr(loc, lhs', rhs'), TyBool
+  | AndExpr(loc, lhs, rhs) ->
+     let lhs', ty_lhs = check_expr scope lhs in
+     unify loc ty_lhs TyBool;
+     let rhs', ty_rhs = check_expr scope rhs in
+     unify loc ty_rhs TyBool;
+     Typed_ast.AndExpr(loc, lhs', rhs'), TyBool
+  | OrExpr(loc, lhs, rhs) ->
+     let lhs', ty_lhs = check_expr scope lhs in
+     unify loc ty_lhs TyBool;
+     let rhs', ty_rhs = check_expr scope rhs in
+     unify loc ty_rhs TyBool;
+     Typed_ast.OrExpr(loc, lhs', rhs'), TyBool
+  | InvertExpr(loc, arg) ->
+     let arg', ty = check_expr scope arg in
+     unify loc ty TyBool;
+     Typed_ast.InvertExpr(loc, arg'), TyBool
   | LambdaExpr(loc, params, body) ->
      let args, ty_args =
        List.fold_left
@@ -242,9 +272,15 @@ let rec find_refs_expr bound acc expr
      if List.mem name bound then acc else (loc, name) :: acc
   | IntExpr(_, _) ->
      acc
+  | BoolExpr(_, _) ->
+     acc
   | AddExpr(_, lhs, rhs)
-    | SubExpr(_, lhs, rhs) ->
+    | SubExpr(_, lhs, rhs)
+    | EqualExpr(_, lhs, rhs)
+    | AndExpr(_, lhs, rhs)
+    | OrExpr(_, lhs, rhs) ->
      find_refs_expr bound (find_refs_expr bound acc rhs) lhs
+  | InvertExpr(_, rhs) -> find_refs_expr bound acc rhs
   | LambdaExpr(_, params, body) ->
      find_refs_expr (List.append params bound) acc body
   | CallExpr(_, callee, args) ->

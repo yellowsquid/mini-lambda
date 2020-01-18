@@ -10,8 +10,11 @@ open Ast
 
 %token <int> INT
 %token <string> IDENT
-%token PLUS
-%token MINUS
+%token TRUE FALSE
+%token INVERT
+%token PLUS MINUS
+%token EQUAL NEQUAL
+%token AND OR
 %token LPAREN RPAREN LBRACE RBRACE
 %token FUNC
 %token RETURN
@@ -56,6 +59,14 @@ expr:
     { AddExpr($startpos, lhs, rhs) }
   | lhs = expr; MINUS; rhs = unary_expr
     { SubExpr($startpos, lhs, rhs) }
+  | lhs = expr; EQUAL; rhs = unary_expr
+    { EqualExpr($startpos, lhs, rhs) }
+  | lhs = expr; NEQUAL; rhs = unary_expr
+    { InvertExpr($startpos, EqualExpr($startpos, lhs, rhs))}
+  | lhs = expr; AND; rhs = unary_expr
+    { AndExpr($startpos, lhs, rhs) }
+  | lhs = expr; OR; rhs = unary_expr
+    { OrExpr($startpos, lhs, rhs) }
 
 unary_expr:
   | LAMBDA
@@ -64,6 +75,7 @@ unary_expr:
     body = postfix_expr;
     { LambdaExpr($startpos, params, body) }
   | postfix_expr { $1 }
+  | INVERT arg = unary_expr; { InvertExpr($startpos, arg) }
 
 postfix_expr:
   | primary_expr { $1 }
@@ -74,3 +86,5 @@ primary_expr:
   | LPAREN e = expr; RPAREN { e }
   | name = IDENT { IdentExpr($startpos, name) }
   | decimal = INT { IntExpr($startpos, decimal) }
+  | TRUE { BoolExpr($startpos, true) }
+  | FALSE { BoolExpr($startpos, false) }

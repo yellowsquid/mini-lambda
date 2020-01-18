@@ -11,8 +11,13 @@ type loc = Lexing.position
 type expr
   = IdentExpr of loc * string
   | IntExpr of loc * int
+  | BoolExpr of loc * bool
   | AddExpr of loc * expr * expr
   | SubExpr of loc * expr * expr
+  | EqualExpr of loc * expr * expr
+  | AndExpr of loc * expr * expr
+  | OrExpr of loc * expr * expr
+  | InvertExpr of loc * expr
   | LambdaExpr of loc * string list * expr
   | CallExpr of loc * expr * expr list
 

@@ -12,10 +12,10 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
   Printf.fprintf out "_lambda_%d:\n" id;
 
   (match name with
-  | None -> ()
-  | Some n ->
-    Printf.fprintf out ".global _lambda_%s\n" n;
-    Printf.fprintf out "_lambda_%s:\n" n
+   | None -> ()
+   | Some n ->
+      Printf.fprintf out ".global _lambda_%s\n" n;
+      Printf.fprintf out "_lambda_%s:\n" n
   );
 
   Printf.fprintf out "\tstmfd sp!, {r0, fp, lr}\n";
@@ -24,65 +24,87 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
     Printf.fprintf out "\tsub sp, sp, #%d\n" (num_locals * 4);
 
   Array.iter
-    (fun inst -> match inst with
-    | GetClosure c ->
-      Printf.fprintf out "\tldr r1, =_lambda_%d_closure\n" c;
-      Printf.fprintf out "\tpush {r1}\n"
-    | GetBuiltin name ->
-      Printf.fprintf out "\tldr r1, =__builtin_%s_closure\n" name;
-      Printf.fprintf out "\tpush {r1}\n"
-    | GetEnv i ->
-      Printf.fprintf out "\tldr r1, [r0, #%d]\n" (4 + i * 4);
-      Printf.fprintf out "\tpush {r1}\n"
-    | GetArg i ->
-      let offset = 3 * 4 + (num_params - i - 1) * 4 in
-      Printf.fprintf out "\tldr r1, [fp, #%d]\n" offset;
-      Printf.fprintf out "\tpush {r1}\n"
-    | GetLocal i ->
-      Printf.fprintf out "\tldr r1, [fp, #%d]\n" (-(i + 1) * 4);
-      Printf.fprintf out "\tpush {r1}\n"
-    | SetLocal i ->
-      Printf.fprintf out "\tpop {r1}\n";
-      Printf.fprintf out "\tstr r1, [fp, #%d]\n" (-(i + 1) * 4)
-    | ConstInt i ->
-      Printf.fprintf out "\tldr r1, =%d\n" i;
-      Printf.fprintf out "\tpush {r1}\n"
-    | Closure(i, num_capture) ->
-      let size = num_capture * 4 + 4 in
-      Printf.fprintf out "\tmov r1, #%d\n" num_capture;
-      Printf.fprintf out "\tbl __builtin_allocate\n";
-      Printf.fprintf out "\tldr r2, =_lambda_%d\n" i;
-      Printf.fprintf out "\tstr r2, [r1]\n";
-      for i = 0 to num_capture - 1 do
-        Printf.fprintf out "\tpop {r2}\n";
-        Printf.fprintf out "\tstr r2, [r1, #%d]\n" (size - (i + 1) * 4);
-      done;
-      Printf.fprintf out "\tpush {r1}\n"
-    | Add ->
-      Printf.fprintf out "\tpop {r1}\n";
-      Printf.fprintf out "\tpop {r2}\n";
-      Printf.fprintf out "\tadd r1, r1, r2\n";
-      Printf.fprintf out "\tpush {r1}\n";
-    | Sub ->
-      Printf.fprintf out "\tpop {r1}\n";
-      Printf.fprintf out "\tpop {r2}\n";
-      Printf.fprintf out "\tsub r1, r1, r2\n";
-      Printf.fprintf out "\tpush {r1}\n";
-    | Call ->
-      Printf.fprintf out "\tpop {r0}\n";
-      Printf.fprintf out "\tldr r1, [r0]\n";
-      Printf.fprintf out "\tblx r1\n";
-      Printf.fprintf out "\tpush {r1}\n";
-    | Return ->
-      Printf.fprintf out "\tpop {r1}\n";
-      if num_locals > 0 then
-        Printf.fprintf out "\tadd sp, sp, #%d\n" (num_locals * 4);
-      Printf.fprintf out "\tldmfd sp!, {r0, fp, lr}\n";
-      if num_params > 0 then
-        Printf.fprintf out "\tadd sp, sp, #%d\n" (num_params * 4);
-      Printf.fprintf out "\tmov pc, lr\n"
-    | Pop ->
-      Printf.fprintf out "\tpop {r1}\n"
+    (fun inst ->
+      match inst with
+      | GetClosure c ->
+         Printf.fprintf out "\tldr r1, =_lambda_%d_closure\n" c;
+         Printf.fprintf out "\tpush {r1}\n"
+      | GetBuiltin name ->
+         Printf.fprintf out "\tldr r1, =__builtin_%s_closure\n" name;
+         Printf.fprintf out "\tpush {r1}\n"
+      | GetEnv i ->
+         Printf.fprintf out "\tldr r1, [r0, #%d]\n" (4 + i * 4);
+         Printf.fprintf out "\tpush {r1}\n"
+      | GetArg i ->
+         let offset = 3 * 4 + (num_params - i - 1) * 4 in
+         Printf.fprintf out "\tldr r1, [fp, #%d]\n" offset;
+         Printf.fprintf out "\tpush {r1}\n"
+      | GetLocal i ->
+         Printf.fprintf out "\tldr r1, [fp, #%d]\n" (-(i + 1) * 4);
+         Printf.fprintf out "\tpush {r1}\n"
+      | SetLocal i ->
+         Printf.fprintf out "\tpop {r1}\n";
+         Printf.fprintf out "\tstr r1, [fp, #%d]\n" (-(i + 1) * 4)
+      | ConstInt i ->
+         Printf.fprintf out "\tldr r1, =%d\n" i;
+         Printf.fprintf out "\tpush {r1}\n"
+      | Closure(i, num_capture) ->
+         let size = num_capture * 4 + 4 in
+         Printf.fprintf out "\tmov r1, #%d\n" num_capture;
+         Printf.fprintf out "\tbl __builtin_allocate\n";
+         Printf.fprintf out "\tldr r2, =_lambda_%d\n" i;
+         Printf.fprintf out "\tstr r2, [r1]\n";
+         for i = 0 to num_capture - 1 do
+           Printf.fprintf out "\tpop {r2}\n";
+           Printf.fprintf out "\tstr r2, [r1, #%d]\n" (size - (i + 1) * 4);
+         done;
+         Printf.fprintf out "\tpush {r1}\n"
+      | Add ->
+         Printf.fprintf out "\tpop {r1}\n";
+         Printf.fprintf out "\tpop {r2}\n";
+         Printf.fprintf out "\tadd r1, r1, r2\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Sub ->
+         Printf.fprintf out "\tpop {r1}\n";
+         Printf.fprintf out "\tpop {r2}\n";
+         Printf.fprintf out "\tsub r1, r1, r2\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | And ->
+         Printf.fprintf out "\tpop{r1}\n";
+         Printf.fprintf out "\tpop{r2}\n}";
+         Printf.fprintf out "\tand r1, r1, r2\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Or ->
+         Printf.fprintf out "\tpop{r1}\n";
+         Printf.fprintf out "\tpop{r2}\n}";
+         Printf.fprintf out "\toor r1, r1, r2\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Equal ->
+         Printf.fprintf out "\tpop {r1}\n";
+         Printf.fprintf out "\tpop {r2}\n";
+         Printf.fprintf out "\tcmp r1, r2\n";
+         Printf.fprintf out "\tmoveq r1, #1\n";
+         Printf.fprintf out "\tmovne r1, #0\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Not ->
+         Printf.fprintf out "\tpop{r1}\n";
+         Printf.fprintf out "\teor r1, r1, #1\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Call ->
+         Printf.fprintf out "\tpop {r0}\n";
+         Printf.fprintf out "\tldr r1, [r0]\n";
+         Printf.fprintf out "\tblx r1\n";
+         Printf.fprintf out "\tpush {r1}\n";
+      | Return ->
+         Printf.fprintf out "\tpop {r1}\n";
+         if num_locals > 0 then
+           Printf.fprintf out "\tadd sp, sp, #%d\n" (num_locals * 4);
+         Printf.fprintf out "\tldmfd sp!, {r0, fp, lr}\n";
+         if num_params > 0 then
+           Printf.fprintf out "\tadd sp, sp, #%d\n" (num_params * 4);
+         Printf.fprintf out "\tmov pc, lr\n"
+      | Pop ->
+         Printf.fprintf out "\tpop {r1}\n"
     ) insts;
 
   Printf.fprintf out "\t.data\n";

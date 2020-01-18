@@ -19,11 +19,14 @@ ARCH=$(uname -m)
 
 # Parse the arguments.
 OUTPUT=""
-while getopts "h?o:" opt; do
+while getopts "h?go:" opt; do
     case "$opt" in
     h|\?)
         show_help
         exit 0
+        ;;
+    g)
+        FLAGS="-g"
         ;;
     o)  OUTPUT=$OPTARG
         ;;
@@ -47,12 +50,15 @@ if test -f "$INPUT"; then
       # Create a temporary directory.
       WORK_DIR=$(mktemp -d)
 
+      # Compile and link.
       (cd "$DIR" || exit; dune exec ./main.exe -- -"$ARCH" "$INPUT" -o "$WORK_DIR/lambda.S")
       gcc -c runtime_x86_64.S -o "$WORK_DIR/runtime.o"
-      gcc "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
+      gcc $FLAGS "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
 
-      # Link with runtime into a binary.
-      trap cleanup EXIT
+      # Cleanup temp directory.
+      if test -z $FLAGS; then
+          trap cleanup EXIT
+      fi
       ;;
   esac
 else

@@ -1,0 +1,13 @@
+func print_bool(x);
+func input_int();
+
+func same(x, y) {
+    return x == y;
+}
+
+func main() {
+    x <- input_int();
+    y <- input_int();
+    s <- same(x, y);
+    print_bool(!(x != y && !s));
+}

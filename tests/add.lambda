@@ -1,0 +1,19 @@
+func print_int(x);
+func input_int();
+
+func sum(x, y, z) {
+    return x + y + z;
+}
+
+func adder(x) {
+    return \(y) -> (\(z) -> sum(x, y, z));
+}
+
+func main() {
+    x <- input_int();
+    y <- input_int();
+    z <- input_int();
+    f <- adder(x);
+    s <- (f(y))(z);
+    print_int(s);
+}
