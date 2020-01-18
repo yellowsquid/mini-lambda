@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 
+set -e
+
 function realpath() {
     [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
 }
@@ -51,7 +53,7 @@ if test -f "$INPUT"; then
       WORK_DIR=$(mktemp -d)
 
       # Compile and link.
-      (cd "$DIR" || exit; dune exec ./main.exe -- -"$ARCH" "$INPUT" -o "$WORK_DIR/lambda.S")
+      (cd "$DIR" || exit 1; dune exec ./main.exe -- -"$ARCH" "$INPUT" -o "$WORK_DIR/lambda.S")
       gcc -c runtime_x86_64.S -o "$WORK_DIR/runtime.o"
       gcc $FLAGS "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
 
