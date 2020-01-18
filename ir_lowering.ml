@@ -89,8 +89,10 @@ let lower program =
             let _, id = Hashtbl.find funcs_by_id func.id in
             let else_id = new_label_id() in
             let end_id = new_label_id() in
-            let second_block' = Ir.Label(id, end_id) :: lower_body [] second_block in
-            let first_block' = Ir.Label(id, else_id) :: Ir.Jump(id, end_id) :: lower_body [] first_block in
+            let second_block' = Ir.Label(id, end_id) :: lower_body [] (List.rev second_block) in
+            let first_block' = Ir.Label(id, else_id)
+                               :: Ir.Jump(id, end_id)
+                               :: lower_body [] (List.rev first_block) in
             let nested = second_block' @ first_block' @ (Ir.If(id, else_id) :: lower_expr acc cond) in
             lower_body nested rest
          | [] ->
