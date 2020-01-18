@@ -3,14 +3,14 @@
 open Typed_ast
 
 let lower program =
-  let next_id = ref 0 in
-  let new_id () = let id = !next_id in next_id := id + 1; id in
+  let next_func_id = ref 0 in
+  let new_func_id () = let id = !next_func_id in next_func_id := id + 1; id in
 
   (* Map function IDs to functions. *)
   let funcs_by_id = Hashtbl.create 10 in
   Array.iter
     (Array.iter
-       (fun func -> Hashtbl.add funcs_by_id func.id (func, new_id ()))
+       (fun func -> Hashtbl.add funcs_by_id func.id (func, new_func_id ()))
     )
     program;
 
@@ -21,6 +21,8 @@ let lower program =
     match func.body with
     | None -> ()
     | Some body ->
+       let next_label_id = ref 0 in
+       let new_label_id () = let id = !next_label_id in next_label_id := id + 1; id in
        let rec lower_expr acc e =
          match e with
          | FuncExpr(_, id) ->
@@ -56,7 +58,7 @@ let lower program =
             Ir.Not :: lower_expr acc expr
          | LambdaExpr(_, num_params, env, body) ->
             (* Create a new closure from the body. *)
-            let id = new_id() in
+            let id = new_func_id() in
             let ir_body = Ir.Return :: lower_expr [] body in
             let num_captures = Array.length env in
             let closure =
@@ -83,6 +85,14 @@ let lower program =
             lower_body (Ir.Pop :: lower_expr acc e) rest
          | BindStmt(_, id, e) :: rest ->
             lower_body (Ir.SetLocal id :: lower_expr acc e) rest
+         | IfStmt(_, cond, first_block, second_block) :: rest ->
+            let _, id = Hashtbl.find funcs_by_id func.id in
+            let else_id = new_label_id() in
+            let end_id = new_label_id() in
+            let second_block' = Ir.Label(id, end_id) :: lower_body [] second_block in
+            let first_block' = Ir.Label(id, else_id) :: Ir.Jump(id, end_id) :: lower_body [] first_block in
+            let nested = second_block' @ first_block' @ (Ir.If(id, else_id) :: lower_expr acc cond) in
+            lower_body nested rest
          | [] ->
             acc
        in

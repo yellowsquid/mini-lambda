@@ -29,6 +29,12 @@ type inst
   | ConstInt of int
   (* Pops a number of values and pushes a closure capturing them. *)
   | Closure of int * int
+  (* Jumps to label if false. *)
+  | If of int * int
+  (* Label for a jump target. *)
+  | Label of int * int
+  (* Jump to a label. *)
+  | Jump of int * int
   (* Pops two values and pushes their sum. *)
   | Add
   (* Pops two values and pushes their difference. *)
@@ -69,6 +75,9 @@ let print_inst out inst =
   | SetLocal i    -> Printf.fprintf out "\tSetLocal(%d)\n" i
   | ConstInt i    -> Printf.fprintf out "\tConstInt(%d)\n" i
   | Closure(i, n) -> Printf.fprintf out "\tClosure(%d, %d)\n" i n
+  | If(i, j)      -> Printf.fprintf out "\tIf(%d, %d)\n" i j
+  | Label(i, j)   -> Printf.fprintf out "\tLabel(%d, %d)\n" i j
+  | Jump(i, j)    -> Printf.fprintf out "\tJump(%d, %d)\n" i j
   | Add           -> Printf.fprintf out "\tAdd\n"
   | Sub           -> Printf.fprintf out "\tSub\n"
   | And           -> Printf.fprintf out "\tAnd\n"

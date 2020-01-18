@@ -58,6 +58,14 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
            Printf.fprintf out "\tmovq %%rdx, %d(%%rcx)\n" (size - (i + 1) * 8);
          done;
          Printf.fprintf out "\tpushq %%rcx\n"
+      | If(i, j) ->
+         Printf.fprintf out "\tpopq %%rcx\n";
+         Printf.fprintf out "\tcmpq $1, %%rcx\n";
+         Printf.fprintf out "\tjne __label_%d_%d\n" i j
+      | Label(i, j) ->
+         Printf.fprintf out "__label_%d_%d:\n" i j
+      | Jump(i, j) ->
+         Printf.fprintf out "\tjmp __label_%d_%d\n" i j
       | Add ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\taddq %%rcx, (%%rsp)\n"

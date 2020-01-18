@@ -1,0 +1,22 @@
+func print_int(x);
+
+func fibb(n) {
+    if n == 0 {
+        return 0;
+    } else if n == 1 {
+        return 1;
+    } else {
+        return fibb(n - 1) + fibb(n - 2);
+    }
+}
+
+func iter(current, limit, f) {
+    if current != limit {
+       f(current);
+       iter(current + 1, limit, f);
+    }
+}
+
+func main() {
+    iter(0, 10, \(x) -> print_int(fibb(x)));
+}

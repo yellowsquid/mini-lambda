@@ -59,6 +59,14 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
            Printf.fprintf out "\tstr r2, [r1, #%d]\n" (size - (i + 1) * 4);
          done;
          Printf.fprintf out "\tpush {r1}\n"
+      | If(i, j) ->
+         Printf.fprintf out "\tpop {r1}\n";
+         Printf.fprintf out "\ttst r1, 1\n";
+         Printf.fprintf out "\tbne __label_%d_%d\n" i j;
+      | Label(i, j) ->
+         Printf.fprintf out "__label_%d_%d:\n" i j
+      | Jump(i, j) ->
+         Printf.fprintf out "\tb __label_%d_%d\n" i j;
       | Add ->
          Printf.fprintf out "\tpop {r1}\n";
          Printf.fprintf out "\tpop {r2}\n";

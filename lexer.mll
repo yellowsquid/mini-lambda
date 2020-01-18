@@ -31,6 +31,8 @@ rule token = parse
   | "\\" { LAMBDA }
   | "->" { ARROW }
   | "func" { FUNC }
+  | "if" { IF }
+  | "else" { ELSE }
   | "return" { RETURN }
   | "<-" { BIND }
   | "true" { TRUE }

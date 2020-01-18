@@ -244,7 +244,7 @@ let rec check_expr scope expr
      Typed_ast.CallExpr(loc, callee', Array.of_list (List.map fst args')), ret_ty
 
 (* Checks the type of a statement. *)
-let check_statements ret_ty acc scope stats
+let rec check_statements ret_ty acc scope stats
   = let rec iter (nb, acc) scope stats = match stats with
       | ReturnStmt(loc, e) :: rest ->
          let e', ty = check_expr scope e in
@@ -276,6 +276,15 @@ let check_statements ret_ty acc scope stats
          unify loc ty bind_ty;
          let node = Typed_ast.BindStmt(loc, nb, e') in
          iter (next_nb, node :: acc) scope' rest
+      | IfStmt(loc, cond, true_branch, false_branch) :: rest ->
+         let cond', cond_ty = check_expr scope cond in
+         unify loc cond_ty TyBool;
+         let ret_ty = new_ty_var () in
+         (* Choose statement blocks must return unit. *)
+         let nb, true_acc' = check_statements ret_ty (nb, []) scope true_branch in
+         let nb, false_acc' = check_statements ret_ty (nb, []) scope false_branch in
+         let node = Typed_ast.IfStmt(loc, cond', true_acc', false_acc') in
+         iter (nb, node :: acc) scope rest
       | [] ->
          (nb, acc)
     in iter acc scope stats
@@ -302,7 +311,7 @@ let rec find_refs_expr bound acc expr
      List.fold_left (find_refs_expr bound) (find_refs_expr bound acc callee) args
 
 (* Finds the free variables in a function body. *)
-let find_refs_stat bound stats
+let rec find_refs_stat bound stats
   = let _, acc =
       List.fold_left
         (fun (bound, acc) stat ->
@@ -314,6 +323,10 @@ let find_refs_stat bound stats
           | BindStmt(_, name, e) ->
              (* The expression can refer to previous instances of 'name'. *)
              (name :: bound, find_refs_expr bound acc e)
+          | IfStmt(_, cond, true_branch, false_branch) ->
+             (bound, (find_refs_expr bound acc cond)
+                     @ (find_refs_stat bound true_branch)
+                     @ (find_refs_stat bound false_branch))
         ) (bound, []) stats
     in acc
 
