@@ -41,7 +41,7 @@ func:
     { { name; params; body; loc = $startpos } }
 
 func_body:
-  | LBRACE body = statements; RBRACE { Some(body) }
+  | LBRACE statements RBRACE { Some($2) }
   | SEMI { None }
 
 statements:
@@ -55,18 +55,12 @@ statement:
 
 expr:
   | unary_expr { $1 }
-  | lhs = expr; PLUS; rhs = unary_expr
-    { AddExpr($startpos, lhs, rhs) }
-  | lhs = expr; MINUS; rhs = unary_expr
-    { SubExpr($startpos, lhs, rhs) }
-  | lhs = expr; EQUAL; rhs = unary_expr
-    { EqualExpr($startpos, lhs, rhs) }
-  | lhs = expr; NEQUAL; rhs = unary_expr
-    { InvertExpr($startpos, EqualExpr($startpos, lhs, rhs))}
-  | lhs = expr; AND; rhs = unary_expr
-    { AndExpr($startpos, lhs, rhs) }
-  | lhs = expr; OR; rhs = unary_expr
-    { OrExpr($startpos, lhs, rhs) }
+  | expr PLUS unary_expr { AddExpr($startpos, $1, $3) }
+  | expr MINUS unary_expr { SubExpr($startpos, $1, $3) }
+  | expr EQUAL unary_expr { EqualExpr($startpos, $1, $3) }
+  | expr NEQUAL unary_expr { InvertExpr($startpos, EqualExpr($startpos, $1, $3))}
+  | expr AND unary_expr { AndExpr($startpos, $1, $3) }
+  | expr OR unary_expr { OrExpr($startpos, $1, $3) }
 
 unary_expr:
   | LAMBDA
@@ -75,7 +69,7 @@ unary_expr:
     body = postfix_expr;
     { LambdaExpr($startpos, params, body) }
   | postfix_expr { $1 }
-  | INVERT arg = unary_expr; { InvertExpr($startpos, arg) }
+  | INVERT unary_expr { InvertExpr($startpos, $2) }
 
 postfix_expr:
   | primary_expr { $1 }
@@ -83,8 +77,8 @@ postfix_expr:
     { CallExpr($startpos, callee, args) }
 
 primary_expr:
-  | LPAREN e = expr; RPAREN { e }
-  | name = IDENT { IdentExpr($startpos, name) }
-  | decimal = INT { IntExpr($startpos, decimal) }
+  | LPAREN expr RPAREN { $2 }
+  | IDENT { IdentExpr($startpos, $1) }
+  | INT { IntExpr($startpos, $1) }
   | TRUE { BoolExpr($startpos, true) }
   | FALSE { BoolExpr($startpos, false) }
