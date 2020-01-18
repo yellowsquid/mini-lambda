@@ -42,7 +42,7 @@ type type_scope
   = GlobalScope of (int * ty) IdentMap.t
   | GroupScope of (int * ty) IdentMap.t
   | FuncScope of (int * ty) IdentMap.t * ty
-  | BindScope of string * int * ty
+  | BindScope of (int * ty) IdentMap.t
   | LambdaScope of (int * ty) IdentMap.t * (lambda_capture IdentMap.t) ref
 
 (* Occurs check *)
@@ -139,7 +139,8 @@ let rec check_expr scope expr
        | FuncScope(map, _) :: _ when IdentMap.mem name map ->
           let id, ty = IdentMap.find name map in
           Typed_ast.ArgExpr(loc, id), ty
-       | BindScope(name', id, ty) :: _ when name = name' ->
+       | BindScope map :: _ when IdentMap.mem name map ->
+          let id, ty = IdentMap.find name map in
           Typed_ast.BoundExpr(loc, id), ty
        | LambdaScope(map, captures) :: rest ->
           (* In a lambda scope, see what needs to be captured. Arguments are *)
@@ -258,9 +259,23 @@ let check_statements ret_ty acc scope stats
          iter (nb, node :: acc) scope rest
       | BindStmt(loc, name, e) :: rest ->
          let e', ty = check_expr scope e in
-         let scope' = BindScope(name, nb, ty) :: scope in
+         let (nb, next_nb, bind_ty, scope') = match scope with
+           | BindScope(map) :: rest ->
+              if IdentMap.mem name map then
+                let id, ty = IdentMap.find name map in
+                (id, nb, ty, scope)
+              else
+                let ty = new_ty_var () in
+                let map = IdentMap.add name (nb, ty) map in
+                (nb, nb + 1, ty, (BindScope map) :: rest)
+           | x ->
+              let ty = new_ty_var () in
+              let map = IdentMap.add name (nb, ty) IdentMap.empty in
+              (nb, nb + 1, ty, (BindScope map) :: x)
+         in
+         unify loc ty bind_ty;
          let node = Typed_ast.BindStmt(loc, nb, e') in
-         iter (nb + 1, node :: acc) scope' rest
+         iter (next_nb, node :: acc) scope' rest
       | [] ->
          (nb, acc)
     in iter acc scope stats
