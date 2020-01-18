@@ -7,8 +7,8 @@
 # main
 ################################################################################
   .text
-  .global _main
-_main:
+  .global main
+main:
   .global _lambda_main
   jmp _lambda_main
 
@@ -31,7 +31,7 @@ __builtin_input_int:
   # Invoke scanf.
   leaq  scanf_format(%rip), %rdi
   movq  %rsp, %rsi
-  callq _scanf
+  callq scanf
 
   # Load the result.
   movq (%rsp), %rcx
@@ -75,7 +75,7 @@ __builtin_print_int:
   # Invoke printf.
   leaq  printf_format(%rip), %rdi
   movq  16(%rbp), %rsi
-  callq _printf
+  callq printf
   xorq  %rcx, %rcx
 
   # Restore previous frame.
@@ -120,7 +120,7 @@ __builtin_allocate:
   leaq 1(%rcx), %r12
   leaq 16(,%rcx, 8), %rdi
   # Invoke malloc.
-  callq _malloc
+  callq malloc
   # Store header.
   movq %r12, (%rax)
   # Return pointer in %rcx.
@@ -132,5 +132,3 @@ __builtin_allocate:
   popq %rax
   popq %rbp
   retq
-
-

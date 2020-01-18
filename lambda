@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/bash
 
 function realpath() {
     [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
@@ -15,7 +15,7 @@ OPTIND=1
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 # Infer the host architecture.
-ARCH=`uname -m`
+ARCH=$(uname -m)
 
 # Parse the arguments.
 OUTPUT=""
@@ -35,21 +35,21 @@ shift $((OPTIND-1))
 [ "${1:-}" = "--" ] && shift
 
 # Find the input file.
-INPUT=`realpath $1`
+INPUT=$(realpath "$1")
 if test -f "$INPUT"; then
   # Compile the file.
   case "$OUTPUT" in
     "")
       # Dump assembly to stdout.
-      (cd $DIR; dune exec ./main.exe -- -$ARCH $INPUT)
+      (cd "$DIR" || exit; dune exec ./main.exe -- -"$ARCH" "$INPUT")
       ;;
     *)
       # Create a temporary directory.
-      WORK_DIR=`mktemp -d`
+      WORK_DIR=$(mktemp -d)
 
-      (cd $DIR; dune exec ./main.exe -- -$ARCH $INPUT -o $WORK_DIR/lambda.S)
-      gcc -c runtime_x86_64.S -o $WORK_DIR/runtime.o
-      gcc $WORK_DIR/lambda.S $WORK_DIR/runtime.o -o $OUTPUT
+      (cd "$DIR" || exit; dune exec ./main.exe -- -"$ARCH" "$INPUT" -o "$WORK_DIR/lambda.S")
+      gcc -c runtime_x86_64.S -o "$WORK_DIR/runtime.o"
+      gcc "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
 
       # Link with runtime into a binary.
       trap cleanup EXIT
