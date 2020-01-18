@@ -8,6 +8,7 @@
 let in_chan = ref stdin
 let out_chan = ref stdout
 let backend = ref Backend_x86_64.compile
+let debug = ref false
 
 let usage = "usage: " ^ Sys.argv.(0) ^ "[-o out] [-x86_64] input"
 
@@ -24,6 +25,10 @@ let speclist =
     , Arg.String (fun s -> out_chan := open_out s)
     , ": output stream"
     )
+  ; ( "-g"
+    , Arg.Unit (fun () -> debug := true)
+    , ": debug comments"
+    )
   ]
 
 let () =
@@ -33,7 +38,7 @@ let () =
     let ast = Parser.program Lexer.token lexbuf in
     let typed_ast = Typing.check ast in
     let ir = Ir_lowering.lower typed_ast in
-    !backend ir !out_chan
+    !backend ir !out_chan !debug
   with
   | Lexer.Error(lnum, cnum, chr) ->
     Printf.eprintf "(%d:%d) lexer error: invalid character '%c'\n"

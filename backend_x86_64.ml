@@ -7,7 +7,7 @@
 
 open Ir
 
-let compile_closure out { id; num_params; num_locals; name; insts; _ } =
+let compile_closure out debug { id; num_params; num_locals; name; insts; _ } =
   Printf.fprintf out "\t.text\n";
   Printf.fprintf out "_lambda_%d:\n" id;
 
@@ -26,6 +26,10 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
 
   Array.iter
     (fun inst ->
+      if debug then begin
+          Printf.fprintf out ";";
+          Ir.print_inst out inst;
+        end;
       match inst with
       | GetClosure c ->
          Printf.fprintf out "\tleaq _lambda_%d_closure(%%rip), %%rcx\n" c;
@@ -111,5 +115,5 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
   Printf.fprintf out "_lambda_%d_closure:\n" id;
   Printf.fprintf out "\t.quad _lambda_%d\n" id
 
-let compile prog out =
-  Array.iter (compile_closure out) prog
+let compile prog out debug =
+  Array.iter (compile_closure out debug) prog
