@@ -16,6 +16,7 @@ rule token = parse
   | [' ' '\t'] { token lexbuf }
   | eof { EOF }
   | '+' { PLUS }
+  | '-' { MINUS }
   | '(' { LPAREN }
   | ')' { RPAREN }
   | '{' { LBRACE }

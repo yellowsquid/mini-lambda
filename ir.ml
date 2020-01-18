@@ -31,6 +31,8 @@ type inst
   | Closure of int * int
   (* Pops two values and pushes their sum. *)
   | Add
+  (* Pops two values and pushes their difference. *)
+  | Sub
   (* Pops a closure and invokes it. *)
   | Call
   (* Pops a return value and returns. *)
@@ -60,6 +62,7 @@ let print_inst out inst =
   | ConstInt i    -> Printf.fprintf out "\tConstInt(%d)\n" i
   | Closure(i, n) -> Printf.fprintf out "\tClosure(%d, %d)\n" i n
   | Add           -> Printf.fprintf out "\tAdd\n"
+  | Sub           -> Printf.fprintf out "\tSub\n"
   | Call          -> Printf.fprintf out "\tInvoke\n"
   | Return        -> Printf.fprintf out "\tReturn\n"
   | Pop           -> Printf.fprintf out "\tPop\n"
@@ -75,4 +78,3 @@ let print_closure out {id; name; num_params; num_captures; num_locals; insts} =
 
 let print_program out prog =
   Array.iter (print_closure out) prog
-

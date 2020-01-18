@@ -63,6 +63,11 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
       Printf.fprintf out "\tpop {r2}\n";
       Printf.fprintf out "\tadd r1, r1, r2\n";
       Printf.fprintf out "\tpush {r1}\n";
+    | Sub ->
+      Printf.fprintf out "\tpop {r1}\n";
+      Printf.fprintf out "\tpop {r2}\n";
+      Printf.fprintf out "\tsub r1, r1, r2\n";
+      Printf.fprintf out "\tpush {r1}\n";
     | Call ->
       Printf.fprintf out "\tpop {r0}\n";
       Printf.fprintf out "\tldr r1, [r0]\n";
@@ -87,4 +92,3 @@ let compile_closure out { id; num_params; num_locals; name; insts; _ } =
 
 let compile prog out =
   Array.iter (compile_closure out) prog
-

@@ -17,6 +17,7 @@ type expr
   | ArgExpr of loc * id
   | IntExpr of loc * int
   | AddExpr of loc * expr * expr
+  | SubExpr of loc * expr * expr
   | LambdaExpr of loc * int * expr array * expr
   | CallExpr of loc * expr * expr array
 
@@ -35,4 +36,3 @@ type func =
   }
 
 type program = func array array
-

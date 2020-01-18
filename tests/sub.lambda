@@ -1,0 +1,18 @@
+func print_int(x);
+func input_int();
+
+func dif(x, y) {
+	return x - y;
+}
+
+func subber(x) {
+	return \(y) -> dif(x, y);
+}
+
+func main() {
+	x <- input_int();
+	y <- input_int();
+	f <- subber(x);
+	s <- f(y);
+	print_int(s);
+}

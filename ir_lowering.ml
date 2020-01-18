@@ -42,6 +42,8 @@ let lower program =
           Ir.ConstInt i :: acc
         | AddExpr(_, lhs, rhs) ->
           Ir.Add :: lower_expr (lower_expr acc lhs) rhs
+        | SubExpr(_, lhs, rhs) ->
+          Ir.Sub :: lower_expr (lower_expr acc lhs) rhs
         | LambdaExpr(_, num_params, env, body) ->
           (* Create a new closure from the body. *)
           let id = new_id() in
@@ -90,4 +92,3 @@ let lower program =
   in
   Array.iter (Array.iter lower_func) program;
   Array.of_list (List.rev !closures)
-

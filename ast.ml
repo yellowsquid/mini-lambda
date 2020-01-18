@@ -12,6 +12,7 @@ type expr
   = IdentExpr of loc * string
   | IntExpr of loc * int
   | AddExpr of loc * expr * expr
+  | SubExpr of loc * expr * expr
   | LambdaExpr of loc * string list * expr
   | CallExpr of loc * expr * expr list
 
@@ -28,4 +29,3 @@ type func =
   }
 
 type program = func array
-
