@@ -36,6 +36,20 @@ and var_ty
   = Unbound of int
   | Bound of ty
 
+(* Todo: link types together. *)
+let rec name_type ty = match ty with
+  | TyInt -> "int"
+  | TyBool -> "bool"
+  | TyUnit -> "unit"
+  | TyArr(params, ret) ->
+     let args = "(" ^ (String.concat ", " (Array.to_list (Array.map name_type params))) ^ ")" in
+     let ret = name_type ret in
+     args ^ " -> " ^ ret
+  | TyVar(ty) -> (match !ty with
+                  | Unbound(n) -> "'" ^ string_of_int n
+                  | Bound(ty) -> name_type ty)
+  | TyAbs(n) -> "''" ^ string_of_int n
+
 (* Scope to find types in. *)
 type lambda_capture = int * Typed_ast.expr * ty
 type type_scope
@@ -46,8 +60,7 @@ type type_scope
   | LambdaScope of (int * ty) IdentMap.t * (lambda_capture IdentMap.t) ref
 
 (* Occurs check *)
-let rec occurs loc r ty
-  = match ty with
+let rec occurs loc r ty = match ty with
   | TyInt -> ()
   | TyBool -> ()
   | TyUnit -> ()
@@ -77,13 +90,13 @@ let rec unify loc a b
          let len_a = Array.length pa in
          let len_b = Array.length pb in
          if len_a != len_b then
-           raise(Error(loc, "mismatched function types"));
+           raise(Error(loc, "mismatched function types: " ^ name_type a ^ " and " ^ name_type b));
          for i = 0 to len_a - 1 do
            unify loc pa.(i) pb.(i);
          done;
          unify loc ra rb
       | _, _ ->
-         raise(Error(loc, "mismatched types"))
+         raise(Error(loc, "mismatched types: " ^ name_type a ^ " and " ^ name_type b))
 
 (* Helper to generate a type variable. *)
 let ty_idx = ref 0
