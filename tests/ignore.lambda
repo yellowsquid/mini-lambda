@@ -1,0 +1,8 @@
+func other() {
+}
+
+func main() {
+    _x <- 3 + 4;
+    _x <- other();
+    _x <- \(x) -> (x + 3);
+}

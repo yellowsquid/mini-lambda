@@ -136,50 +136,52 @@ let instantiate ty =
   in loop ty
 
 (* Checks the type of an expression *)
-let rec check_expr scope expr
-  = match expr with
+let rec check_expr scope expr = match expr with
   | IdentExpr(loc, name) ->
-     let rec find_name ss
-       = match ss with
-       | GlobalScope map :: _ when IdentMap.mem name map ->
-          (* Type schemes are instantiated here. *)
-          let id, ty = IdentMap.find name map in
-          Typed_ast.FuncExpr(loc, id), instantiate ty
-       | GroupScope map :: _ when IdentMap.mem name map ->
-          (* Polymorphic recursion is not allowed, no generalisation here. *)
-          let id, ty = IdentMap.find name map in
-          Typed_ast.FuncExpr(loc, id), ty
-       | FuncScope(map, _) :: _ when IdentMap.mem name map ->
-          let id, ty = IdentMap.find name map in
-          Typed_ast.ArgExpr(loc, id), ty
-       | BindScope map :: _ when IdentMap.mem name map ->
-          let id, ty = IdentMap.find name map in
-          Typed_ast.BoundExpr(loc, id), ty
-       | LambdaScope(map, captures) :: rest ->
-          (* In a lambda scope, see what needs to be captured. Arguments are *)
-          (* handled as expected, while captures are cached. If a captured name *)
-          (* is to be foud, the outside scope is searched, but an env reference *)
-          (* is returned in its place, unless the name is a global. *)
-          if IdentMap.mem name map then
+     if name.[0] == '_' then
+       raise(Error(loc, "attempt to use ignored name " ^ name))
+     else
+       let rec find_name ss
+         = match ss with
+         | GlobalScope map :: _ when IdentMap.mem name map ->
+            (* Type schemes are instantiated here. *)
+            let id, ty = IdentMap.find name map in
+            Typed_ast.FuncExpr(loc, id), instantiate ty
+         | GroupScope map :: _ when IdentMap.mem name map ->
+            (* Polymorphic recursion is not allowed, no generalisation here. *)
+            let id, ty = IdentMap.find name map in
+            Typed_ast.FuncExpr(loc, id), ty
+         | FuncScope(map, _) :: _ when IdentMap.mem name map ->
             let id, ty = IdentMap.find name map in
             Typed_ast.ArgExpr(loc, id), ty
-          else if IdentMap.mem name !captures then
-            let id, _, ty = IdentMap.find name !captures in
-            Typed_ast.EnvExpr(loc, id), ty
-          else begin
-              let expr, ty = find_name rest in
-              match expr with
-              | Typed_ast.FuncExpr(_, _) -> expr, ty
-              | _ ->
-                 let id = IdentMap.cardinal !captures in
-                 captures := IdentMap.add name (id, expr, ty) !captures;
-                 Typed_ast.EnvExpr(loc, id), ty
-            end
-       | _ :: rest ->
-          find_name rest
-       | [] ->
-          raise(Error(loc, "unbound variable " ^ name))
-     in find_name scope
+         | BindScope map :: _ when IdentMap.mem name map ->
+            let id, ty = IdentMap.find name map in
+            Typed_ast.BoundExpr(loc, id), ty
+         | LambdaScope(map, captures) :: rest ->
+            (* In a lambda scope, see what needs to be captured. Arguments are *)
+            (* handled as expected, while captures are cached. If a captured name *)
+            (* is to be foud, the outside scope is searched, but an env reference *)
+            (* is returned in its place, unless the name is a global. *)
+            if IdentMap.mem name map then
+              let id, ty = IdentMap.find name map in
+              Typed_ast.ArgExpr(loc, id), ty
+            else if IdentMap.mem name !captures then
+              let id, _, ty = IdentMap.find name !captures in
+              Typed_ast.EnvExpr(loc, id), ty
+            else begin
+                let expr, ty = find_name rest in
+                match expr with
+                | Typed_ast.FuncExpr(_, _) -> expr, ty
+                | _ ->
+                   let id = IdentMap.cardinal !captures in
+                   captures := IdentMap.add name (id, expr, ty) !captures;
+                   Typed_ast.EnvExpr(loc, id), ty
+              end
+         | _ :: rest ->
+            find_name rest
+         | [] ->
+            raise(Error(loc, "unbound variable " ^ name))
+       in find_name scope
   | IntExpr(loc, i) ->
      Typed_ast.IntExpr(loc, i), TyInt
   | BoolExpr(loc, b) ->
@@ -256,6 +258,20 @@ let rec check_expr scope expr
      unify loc ty_func ty_callee;
      Typed_ast.CallExpr(loc, callee', Array.of_list (List.map fst args')), ret_ty
 
+let find_in_scope(scope, name, nb) = match scope with
+  | BindScope(map) :: rest ->
+     if IdentMap.mem name map then
+       let id, ty = IdentMap.find name map in
+       (id, nb, ty, scope)
+     else
+       let ty = new_ty_var () in
+       let map = IdentMap.add name (nb, ty) map in
+       (nb, nb + 1, ty, (BindScope map) :: rest)
+  | x ->
+     let ty = new_ty_var () in
+     let map = IdentMap.add name (nb, ty) IdentMap.empty in
+     (nb, nb + 1, ty, (BindScope map) :: x)
+
 (* Checks the type of a statement. *)
 let rec check_statements ret_ty acc scope stats
   = let rec iter (nb, acc) scope stats = match stats with
@@ -272,32 +288,24 @@ let rec check_statements ret_ty acc scope stats
          iter (nb, node :: acc) scope rest
       | BindStmt(loc, name, e) :: rest ->
          let e', ty = check_expr scope e in
-         let (nb, next_nb, bind_ty, scope') = match scope with
-           | BindScope(map) :: rest ->
-              if IdentMap.mem name map then
-                let id, ty = IdentMap.find name map in
-                (id, nb, ty, scope)
-              else
-                let ty = new_ty_var () in
-                let map = IdentMap.add name (nb, ty) map in
-                (nb, nb + 1, ty, (BindScope map) :: rest)
-           | x ->
-              let ty = new_ty_var () in
-              let map = IdentMap.add name (nb, ty) IdentMap.empty in
-              (nb, nb + 1, ty, (BindScope map) :: x)
-         in
+         let (nb, next_nb, bind_ty, scope') = find_in_scope(scope, name, nb) in
          unify loc ty bind_ty;
          let node = Typed_ast.BindStmt(loc, nb, e') in
          iter (next_nb, node :: acc) scope' rest
+      | IgnoreStmt(loc, e) :: rest ->
+         (* Extend funky design by having names starting _ pretend to bind. *)
+         let e', _ = check_expr scope e in
+         (* TODO: suggest e; if type is unit *)
+         let node = Typed_ast.ExprStmt(loc, e') in
+         iter (nb, node :: acc) scope rest
       | IfStmt(loc, cond, true_branch, false_branch) :: rest ->
          let cond', cond_ty = check_expr scope cond in
          unify loc cond_ty TyBool;
          let ret_ty = new_ty_var () in
-         (* Choose statement blocks must return unit. *)
-         let nb, true_acc' = check_statements ret_ty (nb, []) scope true_branch in
-         let nb, false_acc' = check_statements ret_ty (nb, []) scope false_branch in
+         let nb', true_acc' = check_statements ret_ty (nb, []) scope true_branch in
+         let nb'', false_acc' = check_statements ret_ty (nb, []) scope false_branch in
          let node = Typed_ast.IfStmt(loc, cond', true_acc', false_acc') in
-         iter (nb, node :: acc) scope rest
+         iter ((max nb' nb''), node :: acc) scope rest
       | [] ->
          (nb, acc)
     in iter acc scope stats
@@ -336,6 +344,8 @@ let rec find_refs_stat bound stats
           | BindStmt(_, name, e) ->
              (* The expression can refer to previous instances of 'name'. *)
              (name :: bound, find_refs_expr bound acc e)
+          | IgnoreStmt(_, e) ->
+             (bound, find_refs_expr bound acc e)
           | IfStmt(_, cond, true_branch, false_branch) ->
              (bound, (find_refs_expr bound acc cond)
                      @ (find_refs_stat bound true_branch)

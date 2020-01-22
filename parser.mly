@@ -10,6 +10,7 @@ open Ast
 
 %token <int> INT
 %token <string> IDENT
+%token <string> IGNORE
 %token TRUE FALSE
 %token INVERT
 %token PLUS MINUS
@@ -34,10 +35,9 @@ open Ast
 program:
   funcs = list(func) EOF { Array.of_list funcs }
 
-
 func:
   | FUNC name = IDENT;
-    LPAREN params = separated_list(COMMA, IDENT); RPAREN
+    LPAREN params = separated_list(COMMA, named); RPAREN
     body = func_body
     { { name; params; body; loc = $startpos } }
 
@@ -53,6 +53,7 @@ statement:
   | if_statement { $1 }
   | RETURN expr SEMI { ReturnStmt($startpos, $2) }
   | IDENT BIND expr SEMI { BindStmt($startpos, $1, $3) }
+  | IGNORE BIND expr SEMI { IgnoreStmt($startpos, $3) }
   | expr SEMI { ExprStmt($startpos, $1) }
 
 if_statement:
@@ -74,7 +75,7 @@ expr:
 
 unary_expr:
   | LAMBDA
-    LPAREN params = separated_list(COMMA, IDENT); RPAREN
+    LPAREN params = separated_list(COMMA, named); RPAREN
     ARROW
     body = postfix_expr;
     { LambdaExpr($startpos, params, body) }
@@ -88,7 +89,11 @@ postfix_expr:
 
 primary_expr:
   | LPAREN expr RPAREN { $2 }
-  | IDENT { IdentExpr($startpos, $1) }
+  | named { IdentExpr($startpos, $1) }
   | INT { IntExpr($startpos, $1) }
   | TRUE { BoolExpr($startpos, true) }
   | FALSE { BoolExpr($startpos, false) }
+
+named:
+  | IDENT { $1 }
+  | IGNORE { $1 }

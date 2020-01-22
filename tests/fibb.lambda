@@ -1,13 +1,19 @@
 func print_int(x);
 
 func fibb(n) {
+    x <- 0;
+
     if n == 0 {
-        return 0;
+        x <- 0;
     } else if n == 1 {
-        return 1;
+        x <- 1;
     } else {
-        return fibb(n - 1) + fibb(n - 2);
+        y <- fibb(n - 1);
+        z <- fibb(n - 2);
+        x <- y + z;
     }
+
+    return x;
 }
 
 func iter(current, limit, f) {
