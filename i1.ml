@@ -68,7 +68,7 @@ let step config = match config with
   | Expr (cnts, env, CallExpr (_, callee, args) :: rest) ->
      Expr (CalleeCnt (env, rest, Array.to_list args) :: cnts, env, [callee])
   | Stmt (cnts, _env, []) -> Apply (cnts, [])
-  | Stmt (cnts, env, ReturnStmt (_, e) :: _rest) -> Expr (cnts, env, [e]) (* FIXME: what is cnts? *)
+  | Stmt (cnts, env, ReturnStmt (_, e) :: _rest) -> Expr (cnts, env, [e]) (* TODO: show why cnts *)
   | Stmt (cnts, env, ExprStmt (_, e) :: rest) ->
      Expr (IgnoreCnt (env, rest) :: cnts, env, [e])
   | Stmt (cnts, env, BindStmt (_, id, e) :: rest) ->
@@ -117,26 +117,10 @@ let step config = match config with
      Stmt (IfBlockCnt (env, stmts) :: rest, env, then_block)
   | Apply (IfCnt (env, stmts, _then_block, else_block) :: rest, [Bool false]) ->
      Stmt (IfBlockCnt (env, stmts) :: rest, env, else_block)
-  | Apply (IfBlockCnt (_env, _stmts) :: rest, [x]) -> Apply (rest, [x]) (* FIXME: what is cnts? *)
+  | Apply (IfBlockCnt (_env, _stmts) :: rest, [x]) -> Apply (rest, [x]) (* TODO: show why rest *)
   | Apply (IfBlockCnt (env, stmts) :: rest, []) -> Stmt (rest, env, stmts)
   | _ -> failwith "type mismatch"
 
-  (* | LambdaCnt (env, stack, params, body) :: rest ->
-   *    let eval env' args =
-   *      if List.length args != params then
-   *        failwith "wrong number of args"
-   *      else
-   *        let env'' = { funcs = env'.funcs
-   *                    ; captures = (Array.of_list values)
-   *                    ; binds = Array.of_list []
-   *                    ; args = Array.of_list args
-   *                    } in
-   *        match interpret_exprs_cnt env'' [body] [] with
-   *        | [x] -> x
-   *        | _ -> failwith "type mismatch"
-   *    in
-   *    let value = Lambda eval in
-   *    interpret_exprs_cnt env stack (ConsCnt value :: rest) *)
 let driver env stmts =
   let rec iter config = match config with
     | Apply ([], values) -> values
