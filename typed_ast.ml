@@ -42,3 +42,71 @@ type func =
   }
 
 type program = func array array
+
+let list_sep ppf _ = Format.fprintf ppf ",@ "
+
+let rec pp_expr ppf expr = match expr with
+  | FuncExpr(_, id) -> Format.fprintf ppf "Func(%d)" id
+  | EnvExpr(_, id) -> Format.fprintf ppf "Capture(%d)" id
+  | BoundExpr(_, id) -> Format.fprintf ppf "Bound(%d)" id
+  | ArgExpr(_, id) -> Format.fprintf ppf "Arg(%d)" id
+  | IntExpr(_, i) -> Format.fprintf ppf "%d" i
+  | BoolExpr(_, b) -> Format.fprintf ppf "%B" b
+  | AddExpr(_, lhs, rhs) ->
+     Format.fprintf ppf "@[<4>AddExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [lhs; rhs];
+     Format.fprintf ppf ")@]";
+  | SubExpr(_, lhs, rhs) ->
+     Format.fprintf ppf "@[<4>SubExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [lhs; rhs];
+     Format.fprintf ppf ")@]";
+  | EqualExpr(_, lhs, rhs) ->
+     Format.fprintf ppf "@[<4>EqualExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [lhs; rhs];
+     Format.fprintf ppf ")@]";
+  | AndExpr(_, lhs, rhs) ->
+     Format.fprintf ppf "@[<4>AndExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [lhs; rhs];
+     Format.fprintf ppf ")@]";
+  | OrExpr(_, lhs, rhs) ->
+     Format.fprintf ppf "@[<4>OrExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [lhs; rhs];
+     Format.fprintf ppf ")@]";
+  | InvertExpr(_, e) ->
+     Format.fprintf ppf "@[<4>InvertExpr(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf [e];
+     Format.fprintf ppf ")@]";
+  | LambdaExpr(_, args, captures, body) ->
+     Format.fprintf ppf "@[<4>LambdaExpr(@,%d,@ @[<1>(@," args;
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf (Array.to_list captures);
+     Format.fprintf ppf ")@],@ ";
+     pp_expr ppf body;
+     Format.fprintf ppf ")@]"
+  | CallExpr(_, callee, args) ->
+     Format.fprintf ppf "@[<4>CallExpr(@,";
+     pp_expr ppf callee;
+     Format.fprintf ppf ",@ @[<1>(@,";
+     Format.pp_print_list ~pp_sep:list_sep pp_expr ppf (Array.to_list args);
+     Format.fprintf ppf ")@])@]"
+
+let rec pp_stmt ppf stmt = match stmt with
+  | ReturnStmt(_, expr) ->
+     Format.fprintf ppf "@[<4>ReturnStmt(@,";
+     pp_expr ppf expr;
+     Format.fprintf ppf ")@]"
+  | ExprStmt(_, expr) ->
+     Format.fprintf ppf "@[<4>ExprStmt(@,";
+     pp_expr ppf expr;
+     Format.fprintf ppf ")@]"
+  | BindStmt(_, id, expr) ->
+     Format.fprintf ppf "@[<4>BindStmt(@,%d,@ " id;
+     pp_expr ppf expr;
+     Format.fprintf ppf ")@]"
+  | IfStmt(_, cond, then_block, else_block) ->
+     Format.fprintf ppf "@[<4>IfStmt(@,";
+     pp_expr ppf cond;
+     Format.fprintf ppf ",@ @[<1>(@,";
+     let sep = (fun ppf _ -> Format.fprintf ppf ")@],@ @[<1>(@,") in
+     let sub_fmt ppf block = Format.pp_print_list ~pp_sep:list_sep pp_stmt ppf block in
+     Format.pp_print_list ~pp_sep:sep sub_fmt ppf [then_block; else_block];
+     Format.fprintf ppf ")@])@]"

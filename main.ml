@@ -5,6 +5,7 @@
  * is emitted pointing to a location in the source code.
  *)
 
+let compile = ref true
 let in_chan = ref stdin
 let out_chan = ref stdout
 let backend = ref Backend_x86_64.compile
@@ -29,6 +30,10 @@ let speclist =
     , Arg.Unit (fun () -> debug := true)
     , ": debug comments"
     )
+  ; ( "-i"
+    , Arg.Unit (fun () -> compile := false)
+    , ": use interpretter"
+    )
   ]
 
 let () =
@@ -37,8 +42,11 @@ let () =
   try
     let ast = Parser.program Lexer.token lexbuf in
     let typed_ast = Typing.check ast in
-    let ir = Ir_lowering.lower typed_ast in
-    !backend ir !out_chan !debug
+    if !compile then
+      let ir = Ir_lowering.lower typed_ast in
+      !backend ir !out_chan !debug
+    else
+      I0.interpret typed_ast !debug
   with
   | Lexer.Error(lnum, cnum, chr) ->
     Printf.eprintf "(%d:%d) lexer error: invalid character '%c'\n"
@@ -59,3 +67,9 @@ let () =
       (pos.Lexing.pos_cnum - pos.Lexing.pos_bol + 1)
       msg;
     exit 1
+  | I0.Error(pos, msg) ->
+     Printf.eprintf "(%d:%d) interpretter error: %s\n"
+       pos.Lexing.pos_lnum
+       (pos.Lexing.pos_cnum - pos.Lexing.pos_bol + 1)
+       msg;
+     exit 1

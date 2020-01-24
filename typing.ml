@@ -304,7 +304,7 @@ let rec check_statements ret_ty acc scope stats
          let ret_ty = new_ty_var () in
          let nb', true_acc' = check_statements ret_ty (nb, []) scope true_branch in
          let nb'', false_acc' = check_statements ret_ty (nb, []) scope false_branch in
-         let node = Typed_ast.IfStmt(loc, cond', true_acc', false_acc') in
+         let node = Typed_ast.IfStmt(loc, cond', (List.rev true_acc'), (List.rev false_acc')) in
          iter ((max nb' nb''), node :: acc) scope rest
       | [] ->
          (nb, acc)

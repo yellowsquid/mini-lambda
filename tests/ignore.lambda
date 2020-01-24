@@ -1,8 +1,9 @@
-func other() {
+func other(_ignored) {
+    return _ignored + 2;
 }
 
 func main() {
     _x <- 3 + 4;
-    _x <- other();
+    _x <- other(3);
     _x <- \(x) -> (x + 3);
 }

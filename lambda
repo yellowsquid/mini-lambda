@@ -19,16 +19,17 @@ ARCH=$(uname -m)
 
 # Parse the arguments.
 OUTPUT=""
-while getopts "h?go:" opt; do
+while getopts "h?gio:" opt; do
     case "$opt" in
     h|\?)
         show_help
         exit 0
         ;;
-    g)
-        FLAGS="-g"
+    g|i)
+        FLAGS="${FLAGS:+$FLAGS }-$opt"
         ;;
-    o)  OUTPUT=$OPTARG
+    o)
+        OUTPUT=$OPTARG
         ;;
     esac
 done
