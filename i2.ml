@@ -4,10 +4,12 @@ open Typed_ast
 
 type value
   = Unit
+  | None
   | Bool of bool
   | Int of int
-  | Func of (env -> value list -> value)
+  | Func of int * int * statement list
   | Lambda of int * value array * expr
+  | Builtin of (value list -> value)
 and env =
   { funcs: value array
   ; captures: value array
@@ -16,134 +18,134 @@ and env =
   }
 
 type cnt
-  = ConsCnt of value
-  | AddCnt of env * expr list
-  | SubCnt of env * expr list
-  | EqualCnt of env * expr list
-  | AndCnt of env * expr list
-  | OrCnt of env * expr list
-  | InvertCnt of env * expr list
-  | LambdaCnt of env * expr list * int * expr
-  | CalleeCnt of env * expr list * expr list
-  | CallCnt of env * expr list * value list
-  | CallLambdaCnt of env * expr list
-  | IgnoreCnt of env * statement list
-  | BindCnt of env * statement list * id
-  | IfCnt of env * statement list * statement list * statement list
-  | IfBlockCnt of env * statement list
+  = AddOuterCnt of env * expr
+  | AddCnt of int
+  | SubOuterCnt of env * expr
+  | SubCnt of int
+  | EqualOuterCnt of env * expr
+  | EqualIntCnt of int
+  | EqualBoolCnt of bool
+  | AndOuterCnt of env * expr
+  | AndCnt of bool
+  | OrOuterCnt of env * expr
+  | OrCnt of bool
+  | InvertCnt
+  | LambdaCnt of env * expr list * value list * int * expr
+  | CallCnt of env * expr list
+  | ArgsCnt of env * expr list * value list * value
+  | IgnoreCnt
+  | BindCnt of env * id
+  | IfCnt of env * statement list * statement list
+  | SeqCnt of env * statement list
 
 type step
-  = Expr of cnt list * env * expr list
-  | Stmt of cnt list * env * statement list
-  | Apply of cnt list * value list
+  = Expr of cnt list * env * expr
+  | Stmt of cnt list * env * statement
+  | Apply of cnt list * value
 
 let step config = match config with
-  | Expr (cnts, _env, []) -> Apply (cnts, [])
-  | Expr (cnts, env, FuncExpr (_, id) :: rest) ->
-     Expr (ConsCnt (Array.get env.funcs id) :: cnts, env, rest)
-  | Expr (cnts, env, EnvExpr (_, id) :: rest) ->
-     Expr (ConsCnt (Array.get env.captures id) :: cnts, env, rest)
-  | Expr (cnts, env, BoundExpr (_, id) :: rest) ->
-     Expr (ConsCnt !(Array.get env.binds id) :: cnts, env, rest)
-  | Expr (cnts, env, ArgExpr (_, id) :: rest) ->
-     Expr (ConsCnt (Array.get env.args id) :: cnts, env, rest)
-  | Expr (cnts, env, IntExpr (_, i) :: rest) ->
-     Expr (ConsCnt (Int i) :: cnts, env, rest)
-  | Expr (cnts, env, BoolExpr (_, b) :: rest) ->
-     Expr (ConsCnt (Bool b) :: cnts, env, rest)
-  | Expr (cnts, env, AddExpr (_, lhs, rhs) :: rest) ->
-     Expr (AddCnt (env, rest) :: cnts, env, [lhs; rhs])
-  | Expr (cnts, env, SubExpr (_, lhs, rhs) :: rest) ->
-     Expr (SubCnt (env, rest) :: cnts, env, [lhs; rhs])
-  | Expr (cnts, env, EqualExpr (_, lhs, rhs) :: rest) ->
-     Expr (EqualCnt (env, rest) :: cnts, env, [lhs; rhs])
-  | Expr (cnts, env, AndExpr (_, lhs, rhs) :: rest) ->
-     Expr (AndCnt (env, rest) :: cnts, env, [lhs; rhs])
-  | Expr (cnts, env, OrExpr (_, lhs, rhs) :: rest) ->
-     Expr (OrCnt (env, rest) :: cnts, env, [lhs; rhs])
-  | Expr (cnts, env, InvertExpr (_, e) :: rest) ->
-     Expr (InvertCnt (env, rest) :: cnts, env, [e])
-  | Expr (cnts, env, LambdaExpr (_, params, captures, body) :: rest) ->
-     Expr (LambdaCnt (env, rest, params, body) :: cnts, env, Array.to_list captures)
-  | Expr (cnts, env, CallExpr (_, callee, args) :: rest) ->
-     Expr (CalleeCnt (env, rest, Array.to_list args) :: cnts, env, [callee])
-  | Stmt (cnts, _env, []) -> Apply (cnts, [])
-  | Stmt (cnts, env, ReturnStmt (_, e) :: _rest) -> Expr (cnts, env, [e]) (* TODO: show why cnts *)
-  | Stmt (cnts, env, ExprStmt (_, e) :: rest) ->
-     Expr (IgnoreCnt (env, rest) :: cnts, env, [e])
-  | Stmt (cnts, env, BindStmt (_, id, e) :: rest) ->
-     Expr (BindCnt (env, rest, id) :: cnts, env, [e])
-  | Stmt (cnts, env, IfStmt (_, cond, then_block, else_block) :: rest) ->
-     Expr (IfCnt (env, rest, then_block, else_block) :: cnts, env, [cond])
-  | Apply ([], values) -> Apply ([], values)
-  | Apply (ConsCnt value :: rest, values) -> Apply (rest, value :: values)
-  | Apply (AddCnt (env, stack) :: rest, [Int a; Int b]) ->
-     Expr (ConsCnt (Int (a + b)) :: rest, env, stack)
-  | Apply (SubCnt (env, stack) :: rest, [Int a; Int b]) ->
-     Expr (ConsCnt (Int (a - b)) :: rest, env, stack)
-  | Apply (EqualCnt (env, stack) :: rest, [Int a; Int b]) ->
-     Expr (ConsCnt (Bool (a = b)) :: rest, env, stack)
-  | Apply (EqualCnt (env, stack) :: rest, [Bool a; Bool b]) ->
-     Expr (ConsCnt (Bool (a = b)) :: rest, env, stack)
-  | Apply (AndCnt (env, stack) :: rest, [Bool a; Bool b]) ->
-     Expr (ConsCnt (Bool (a && b)) :: rest, env, stack)
-  | Apply (OrCnt (env, stack) :: rest, [Bool a; Bool b]) ->
-     Expr (ConsCnt (Bool (a || b)) :: rest, env, stack)
-  | Apply (InvertCnt (env, stack) :: rest, [Bool b]) ->
-     Expr (ConsCnt (Bool (not b)) :: rest, env, stack)
-  | Apply (LambdaCnt (env, stack, params, body) :: rest, values) ->
-     Expr (ConsCnt (Lambda (params, Array.of_list values, body)) :: rest, env, stack)
-  | Apply (CalleeCnt (env, stack, args) :: rest, values) ->
-     Expr (CallCnt (env, stack, values) :: rest, env, args)
-  | Apply (CallCnt (env, stack, [Lambda (params, captures, body)]) :: rest, values)
-    when params = List.length values ->
+  | Expr (cnts, env, FuncExpr (_, id)) -> Apply (cnts, Array.get env.funcs id)
+  | Expr (cnts, env, EnvExpr (_, id)) -> Apply (cnts, Array.get env.captures id)
+  | Expr (cnts, env, BoundExpr (_, id)) -> Apply (cnts, !(Array.get env.binds id))
+  | Expr (cnts, env, ArgExpr (_, id)) -> Apply (cnts, Array.get env.args id)
+  | Expr (cnts, _, IntExpr (_, i)) -> Apply (cnts, Int i)
+  | Expr (cnts, _, BoolExpr (_, b)) -> Apply (cnts, Bool b)
+  | Expr (cnts, env, AddExpr (_, lhs, rhs)) -> Expr (AddOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, SubExpr (_, lhs, rhs)) -> Expr (SubOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, EqualExpr (_, lhs, rhs)) -> Expr (EqualOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, AndExpr (_, lhs, rhs)) -> Expr (AndOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, OrExpr (_, lhs, rhs)) -> Expr (OrOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, InvertExpr (_, e)) -> Expr (InvertCnt :: cnts, env, e)
+
+  | Expr (cnts, env, LambdaExpr (_, params, captures, body)) ->
+     Apply (LambdaCnt (env, Array.to_list captures, [], params, body) :: cnts, None)
+  | Expr (cnts, env, CallExpr (_, callee, args)) ->
+     Expr (CallCnt (env, Array.to_list args) :: cnts, env, callee)
+
+  | Stmt (cnts, env, ReturnStmt (_, e)) -> Expr (cnts, env, e)
+  | Stmt (cnts, env, ExprStmt (_, e)) -> Expr (IgnoreCnt :: cnts, env, e)
+  | Stmt (cnts, env, BindStmt (_, id, e)) -> Expr (BindCnt (env, id) :: cnts, env, e)
+  | Stmt (cnts, env, IfStmt (_, cond, tblock, fblock)) ->
+     Expr (IfCnt (env, tblock, fblock) :: cnts, env, cond)
+
+  | Apply ([], value) -> Apply ([], value)
+  | Apply (AddOuterCnt (env, rhs) :: rest, Int a) -> Expr (AddCnt a :: rest, env, rhs)
+  | Apply (AddCnt a :: rest, Int b) -> Apply (rest, Int (a + b))
+  | Apply (SubOuterCnt (env, rhs) :: rest, Int a) -> Expr (SubCnt a :: rest, env, rhs)
+  | Apply (SubCnt a :: rest, Int b) -> Apply (rest, Int (a - b))
+  | Apply (EqualOuterCnt (env, rhs) :: rest, Int a) -> Expr (EqualIntCnt a :: rest, env, rhs)
+  | Apply (EqualOuterCnt (env, rhs) :: rest, Bool a) -> Expr (EqualBoolCnt a :: rest, env, rhs)
+  | Apply (EqualIntCnt a :: rest, Int b) -> Apply (rest, Bool (a = b))
+  | Apply (EqualBoolCnt a :: rest, Bool b) -> Apply (rest, Bool (a = b))
+  | Apply (AndOuterCnt (env, rhs) :: rest, Bool a) -> Expr (AndCnt a :: rest, env, rhs)
+  | Apply (AndCnt a :: rest, Bool b) -> Apply (rest, Bool (a && b))
+  | Apply (OrOuterCnt (env, rhs) :: rest, Bool a) -> Expr (OrCnt a :: rest, env, rhs)
+  | Apply (OrCnt a :: rest, Bool b) -> Apply (rest, Bool (a || b))
+  | Apply (InvertCnt :: rest, Bool a) -> Apply (rest, Bool (not a))
+
+  | Apply (LambdaCnt (_, [], captured, p, body) :: rest, None) ->
+     Apply (rest, Lambda (p, Array.of_list (List.rev captured), body))
+  | Apply (LambdaCnt (env, e :: exprs, captured, p, body) :: rest, None) ->
+     Expr (LambdaCnt (env, exprs, captured, p, body) :: rest, env, e)
+  | Apply (LambdaCnt (env, to_capture, captured, p, body) :: rest, v) ->
+     Apply (LambdaCnt (env, to_capture, v :: captured, p, body) :: rest, None)
+  | Apply (CallCnt (env, args) :: rest, v) ->
+     Apply (ArgsCnt (env, args, [], v) :: rest, None)
+  | Apply (ArgsCnt (env, [], parsed, Lambda (params, captures, body)) :: rest, None)
+       when params = List.length parsed ->
      let env' = { funcs = env.funcs
                 ; captures = captures
                 ; binds = Array.of_list []
-                ; args = Array.of_list values
+                ; args = Array.of_list (List.rev parsed)
                 }
-     in
-     Expr (CallLambdaCnt (env, stack) :: rest, env', [body])
-  | Apply (CallCnt (env, stack, [Func f]) :: rest, values) ->
-     Expr (ConsCnt (f env values) :: rest, env, stack)
-  | Apply (CallLambdaCnt (env, stack) :: rest, [e]) ->
-     Expr (ConsCnt e :: rest, env, stack)
-  | Apply (IgnoreCnt (env, stmts) :: rest, _values) ->
-     Stmt (rest, env, stmts)
-  | Apply (BindCnt (env, stmts, id) :: rest, [e]) ->
-     (Array.get env.binds id) := e;
-     Stmt (rest, env, stmts)
-  | Apply (IfCnt (env, stmts, then_block, _else_block) :: rest, [Bool true]) ->
-     Stmt (IfBlockCnt (env, stmts) :: rest, env, then_block)
-  | Apply (IfCnt (env, stmts, _then_block, else_block) :: rest, [Bool false]) ->
-     Stmt (IfBlockCnt (env, stmts) :: rest, env, else_block)
-  | Apply (IfBlockCnt (_env, _stmts) :: rest, [x]) -> Apply (rest, [x]) (* TODO: show why rest *)
-  | Apply (IfBlockCnt (env, stmts) :: rest, []) -> Stmt (rest, env, stmts)
+     in Expr (rest, env', body)
+  | Apply (ArgsCnt (env, [], parsed, Func (binds, params, body)) :: rest, None)
+       when params = List.length parsed ->
+     let env' = { funcs = env.funcs
+                ; captures = Array.of_list []
+                ; binds = Array.init binds (fun _ -> ref None)
+                ; args = Array.of_list (List.rev parsed)
+                }
+     in Apply (SeqCnt (env', body) :: rest, None)
+  | Apply (ArgsCnt (_, [], parsed, Builtin f) :: rest, None) ->
+     Apply (rest, f (List.rev parsed))
+  | Apply (ArgsCnt (env, e :: exprs, parsed, callee) :: rest, None) ->
+     Expr (ArgsCnt (env, exprs, parsed, callee) :: rest, env, e)
+  | Apply (ArgsCnt (env, exprs, parsed, callee) :: rest, v) ->
+     Apply (ArgsCnt (env, exprs, v :: parsed, callee) :: rest, None)
+
+  | Apply (IgnoreCnt :: rest, _) -> Apply (rest, None)
+  | Apply (BindCnt (env, id) :: rest, x) -> Array.get env.binds id := x; Apply (rest, None)
+  | Apply (IfCnt (env, tblock, _) :: rest, Bool true) -> Apply (SeqCnt (env, tblock) :: rest, None)
+  | Apply (IfCnt (env, _, fblock) :: rest, Bool false) -> Apply (SeqCnt (env, fblock) :: rest, None)
+  | Apply (SeqCnt (_, []) :: rest, None) -> Apply (rest, None)
+  | Apply (SeqCnt (env, s :: stmts) :: rest, None) -> Stmt (SeqCnt (env, stmts) :: rest, env, s)
+  | Apply (SeqCnt (_, _) :: rest, x) -> Apply (rest, x)
   | _ -> failwith "type mismatch"
 
 let driver env stmts =
   let rec iter config = match config with
-    | Apply ([], values) -> values
+    | Apply ([], value) -> value
     | _ -> iter (step config)
-  in iter (Stmt ([], env, stmts))
+  in iter (Apply ([SeqCnt(env, stmts)], None))
 
 module FuncMap = Map.Make(String)
 
-let print_int _env x_list = match x_list with
+let print_int x_list = match x_list with
   | [Int x] -> print_int x; print_newline(); Unit
   | _ -> failwith "type mismatch"
 
-let print_bool _env b_list = match b_list with
+let print_bool b_list = match b_list with
   | [Bool b] -> print_string (string_of_bool b); print_newline (); Unit
   | _ -> failwith "type mismatch"
 
-let input_int _env empty_list = match empty_list with
+let input_int empty_list = match empty_list with
   | [] -> Int (read_int ())
   | _ -> failwith "type mismatch"
 
-let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Func print_int
-                                           ; "print_bool", Func print_bool
-                                           ; "input_int", Func input_int])
+let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Builtin print_int
+                                           ; "print_bool", Builtin print_bool
+                                           ; "input_int", Builtin input_int])
 
 
 let interpret_func func =
@@ -153,21 +155,7 @@ let interpret_func func =
     else
       failwith "built-in has no definition"
   else
-    let eval env args =
-      if List.length args != func.num_params then
-        failwith "wrong number of args"
-      else
-        let env' = { funcs = env.funcs
-                   ; captures = Array.of_list []
-                   ; binds = Array.init func.num_locals (fun _ -> ref Unit)
-                   ; args = Array.of_list args
-                   }
-        in
-        match driver env' (Option.get func.body) with
-        | [x] -> x
-        | [] -> Unit
-        | _ -> failwith "type mismatch"
-    in Func eval
+    Func (func.num_locals, func.num_params, Option.get func.body)
 
 let interpret program =
   let program' = Array.concat (Array.to_list program) in
@@ -185,5 +173,5 @@ let interpret program =
   let call_expr = CallExpr (Lexing.dummy_pos, func_expr, args) in
   let call_stmt = ExprStmt (Lexing.dummy_pos, call_expr) in
   match driver env [call_stmt] with
-  | [] -> ()
+  | None -> ()
   | _ -> failwith "type mismatch"
