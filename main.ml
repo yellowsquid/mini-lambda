@@ -46,7 +46,7 @@ let () =
       let ir = Ir_lowering.lower typed_ast in
       !backend ir !out_chan !debug
     else
-      I1.interpret typed_ast
+      I2.interpret typed_ast
   with
   | Lexer.Error(lnum, cnum, chr) ->
     Printf.eprintf "(%d:%d) lexer error: invalid character '%c'\n"
