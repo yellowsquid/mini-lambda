@@ -1,21 +1,5 @@
 open Typed_ast
 
-type value
-  = None
-  | Unit
-  | Bool of bool
-  | Int of int
-  | Func of int * int * statement list
-  | Lambda of int * value list * expr
-  | Builtin of (value list -> value)
-
-type env =
-  { funcs: value array
-  ; captures: value array
-  ; binds: value ref array
-  ; args: value array
-  }
-
 type directive
   = Expr of expr
   | Stmt of statement
@@ -29,17 +13,33 @@ type directive
   | PopEnv
   | PushNone
   | Seq
-  | Capture of int * int * expr
+  | Capture of int * int * directive list
   | Call of int
   | Bind of int
-  | If of statement list * statement list
+  | If of directive list * directive list
+
+type value
+  = None
+  | Unit
+  | Bool of bool
+  | Int of int
+  | Func of int * int * directive list
+  | Lambda of int * value list * directive list
+  | Builtin of (value list -> value)
+
+type env =
+  { funcs: value array
+  ; captures: value array
+  ; binds: value ref array
+  ; args: value array
+  }
 
 let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
   | _, v :: rest -> take_rev (n - 1) (v :: acc) rest
   | _, _ -> failwith "stack too short"
 
-let make_block stmts = List.flatten (List.map (fun s -> [Stmt s; Seq]) stmts)
+let make_block stmts = List.flatten (List.map (fun s -> [Stmt s; Seq]) stmts) @ [PushNone]
 
 let step directives values envs = match directives, values, envs with
   | [], values, envs -> [], values, envs
@@ -69,7 +69,7 @@ let step directives values envs = match directives, values, envs with
      Expr e :: Invert :: rest, values, envs
   | Expr (LambdaExpr (_, params, captures, body)) :: rest, _, _ ->
      let capturing = List.map (fun e -> Expr e) (Array.to_list captures) in
-     capturing @ (Capture (params, Array.length captures, body) :: rest), values, envs
+     capturing @ (Capture (params, Array.length captures, [Expr body]) :: rest), values, envs
   | Expr (CallExpr (_, callee, args)) :: rest, _, _ ->
      let evaled_args = List.map (fun e -> Expr e) (Array.to_list args) in
      Expr callee :: evaled_args @ (Call (Array.length args) :: PopEnv :: rest), values, envs
@@ -81,7 +81,7 @@ let step directives values envs = match directives, values, envs with
   | Stmt (BindStmt (_, id, e)) :: rest, _, _ ->
      Expr e :: Bind id :: rest, values, envs
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
-     Expr cond :: If (tblock, fblock) :: rest, values, envs
+     Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs
 
   | Add :: rest, Int b :: Int a :: values', _ ->
      rest, Int (a + b) :: values', envs
@@ -125,7 +125,7 @@ let step directives values envs = match directives, values, envs with
                     ; binds = Array.of_list []
                     ; args = Array.of_list args'
                     } in
-         Expr body :: rest, values'', env' :: envs
+         body @ rest, values'', env' :: envs
       | Func (binds, params, body)
            when params = args ->
          let env' = { funcs = env.funcs
@@ -133,7 +133,7 @@ let step directives values envs = match directives, values, envs with
                     ; binds = Array.init binds (fun _ -> ref None)
                     ; args = Array.of_list args'
                     } in
-         make_block body @ (PushNone :: rest), values'', env' :: envs
+         body @ rest, values'', env' :: envs
       | Builtin f ->
          rest, f args' :: values'', env :: envs
       | _ -> failwith "type mismatch")
@@ -142,16 +142,16 @@ let step directives values envs = match directives, values, envs with
      (Array.get env.binds id) := v;
      rest, None :: values', envs
   | If (tblock, _) :: rest, Bool true :: values', _ ->
-     make_block tblock @ (PushNone :: rest), values', envs
+     tblock @ rest, values', envs
   | If (_, fblock) :: rest, Bool false :: values', _ ->
-     make_block fblock @ (PushNone :: rest), values', envs
+     fblock @ rest, values', envs
   | _, _, _ -> failwith "type mismatch"
 
 let driver env stmts =
   let rec iter (directives, values, envs) = match directives with
     | [] -> values
     | _ -> iter (step directives values envs) in
-  iter ((make_block stmts @ [PushNone]), [], [env])
+  iter ((make_block stmts), [], [env])
 
 module FuncMap = Map.Make(String)
 
@@ -178,7 +178,7 @@ let interpret_func func =
     else
       failwith "built-in has no definition"
   else
-    Func (func.num_locals, func.num_params, Option.get func.body)
+    Func (func.num_locals, func.num_params, make_block (Option.get func.body))
 
 let interpret program =
   let program' = Array.concat (Array.to_list program) in
