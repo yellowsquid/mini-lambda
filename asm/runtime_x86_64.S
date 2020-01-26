@@ -117,12 +117,24 @@ __builtin_print_bool:
   subq $16, %rsp
   andq $-16, %rsp
 
-  # Invoke printf.
-  leaq  printf_format_bool(%rip), %rdi
-  movq  16(%rbp), %rsi
-  callq printf
-  xorq  %rcx, %rcx
+  # Test if true
+  cmpq $1, 16(%rbp)
+  jne __builtin_print_bool_false
 
+  # Invoke puts for true.
+  leaq  puts_true(%rip), %rdi
+  callq puts
+  xorq  %rcx, %rcx
+  jmp __builtin_print_bool_end
+
+__builtin_print_bool_false:
+  # Invoke puts for false.
+  leaq  puts_false(%rip), %rdi
+  callq puts
+  xorq  %rcx, %rcx
+  jmp __builtin_print_bool_end
+
+__builtin_print_bool_end:
   # Restore previous frame.
   movq %rbx, %rsp
   popq %rax
@@ -135,8 +147,12 @@ __builtin_print_bool:
   retq
 
   .data
-printf_format_bool:
-  .string "%d\n"
+puts_true:
+  .string "true"
+
+  .data
+puts_false:
+  .string "false"
 
   .data
   .global __builtin_print_bool_closure
