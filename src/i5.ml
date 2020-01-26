@@ -23,8 +23,6 @@ type directive
   | Push of value
   (* Pops value *)
   | Pop
-  (* Pushes environment *)
-  | PopEnv
   (* Lambda capture: #params * #locals * block *)
   | Capture of int * int * int
   (* Calls builtin function *)
@@ -71,7 +69,6 @@ let rec pp_directive ppf directive = match directive with
      pp_value ppf v;
      Format.fprintf ppf ")@]"
   | Pop -> Format.fprintf ppf "Pop"
-  | PopEnv -> Format.fprintf ppf "PopEnv"
   | Capture (params, captures, body) ->
      Format.fprintf ppf "Capture(%d, %d, %d)" params captures body;
   | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
@@ -156,7 +153,7 @@ let rec flatten_expr acc expr = match expr with
      let acc' = Capture (params, Array.length captures, captured) :: acc in
      List.fold_left flatten_expr acc' (List.rev (Array.to_list captures))
   | CallExpr (_, callee, args) ->
-     let return = add_block (PopEnv :: acc) in
+     let return = add_block acc in
      let call' = Call (Array.length args, return) in
      flatten_expr (List.fold_left flatten_expr [call'] (List.rev (Array.to_list args))) callee
 
@@ -190,7 +187,7 @@ let step directives values envs = match directives, values, envs with
       | _ -> failwith "type mismatch"
      )
 
-  | Return :: _, _, env :: _ -> get_block env.return, values, envs
+  | Return :: _, _, env :: envs' -> get_block env.return, values, envs'
   | Jump block :: _, _, _ -> get_block block, values, envs
 
   | If (tblock, _) :: _, Bool true :: values', _ -> get_block tblock, values', envs
@@ -211,7 +208,6 @@ let step directives values envs = match directives, values, envs with
      rest, !(Array.get env.stack (id + env.locals)) :: values, envs
   | Push v :: rest, _, _ -> rest, v :: values, envs
   | Pop :: rest, _ :: values', _ -> rest, values', envs
-  | PopEnv :: rest, _, _ :: envs' -> rest, values, envs'
 
   | Capture (params, captures, body) :: rest, _, _ ->
      let captures', values' = take_rev captures [] values in
@@ -236,7 +232,9 @@ let driver debug env directives =
         pp_value_list Format.std_formatter values;
         Format.fprintf Format.std_formatter ",@ @,";
         pp_env_list Format.std_formatter envs;
-        Format.fprintf Format.std_formatter ")@]@\n" end;
+        Format.fprintf Format.std_formatter ")@]";
+        Format.pp_print_newline Format.std_formatter ();
+      end;
     match directives with
     | [] -> values
     | _ -> iter (step directives values envs) in

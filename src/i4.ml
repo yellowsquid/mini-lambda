@@ -199,7 +199,9 @@ let driver debug env directives =
         pp_value_list Format.std_formatter values;
         Format.fprintf Format.std_formatter ",@ @,";
         pp_env_list Format.std_formatter envs;
-        Format.fprintf Format.std_formatter ")@]@\n" end;
+        Format.fprintf Format.std_formatter ")@]";
+        Format.pp_print_newline Format.std_formatter ();
+      end;
     match directives with
     | [] -> values
     | _ -> iter (step directives values envs) in
