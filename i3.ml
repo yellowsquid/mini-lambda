@@ -78,7 +78,6 @@ and pp_value_list ppf values =
   Format.pp_print_list ~pp_sep:list_sep pp_value ppf values;
   Format.fprintf ppf ")@]"
 
-(* Switch to pp_value_list and make pp_env_list so can add debug print to driver - fibb broken *)
 let pp_env ppf env =
   Format.fprintf ppf "@[<1>(%d,@ " env.locals;
   pp_value_list ppf (Array.to_list (Array.map (!) env.stack));
