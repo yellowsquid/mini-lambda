@@ -13,31 +13,29 @@ type directive
   | PopEnv
   | PushNone
   | Seq
+  (* Params * Locals * Body *)
   | Capture of int * int * directive list
+  | Builtin of (env -> value)
   | Call of int
   | Bind of int
   | If of directive list * directive list
-
-type value
+and value
   = None
   | Unit
   | Bool of bool
   | Int of int
-  | Func of int * int * directive list
-  | Lambda of int * value list * directive list
-  | Builtin of (value list -> value)
-
-type env =
-  { captures: value array
-  ; binds: value ref array
-  ; args: value array
+  (* Params * Locals * Body *)
+  | Func of int * value list  * directive list
+and env =
+  { locals: int
+  ; stack: value ref array
   }
 
 let list_sep ppf _ = Format.fprintf ppf ",@ "
 
 let rec pp_directive ppf directive = match directive with
-  | Expr e -> Format.fprintf ppf "@[<4>Expr(@,"; pp_expr ppf e; Format.fprintf ppf ")@]"
-  | Stmt s -> Format.fprintf ppf "@[<4>Stmt(@,"; pp_stmt ppf s; Format.fprintf ppf ")@]"
+  | Expr e -> Format.fprintf ppf "@[<4>Expr("; pp_expr ppf e; Format.fprintf ppf ")@]"
+  | Stmt s -> Format.fprintf ppf "@[<4>Stmt("; pp_stmt ppf s; Format.fprintf ppf ")@]"
   | Add -> Format.fprintf ppf "Add"
   | Sub -> Format.fprintf ppf "Sub"
   | Equal -> Format.fprintf ppf "Equal"
@@ -49,17 +47,18 @@ let rec pp_directive ppf directive = match directive with
   | PushNone -> Format.fprintf ppf "PushNone"
   | Seq -> Format.fprintf ppf "Seq"
   | Capture (params, captures, body) ->
-     Format.fprintf ppf "@[<4>Capture(@,%d,@ %d,@ " params captures;
+     Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
      pp_directive_list ppf body;
      Format.fprintf ppf ")@]"
+  | Builtin _ -> Format.fprintf ppf "Builtin"
   | Call args -> Format.fprintf ppf "Call(%d)" args
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
   | If (tblock, fblock) ->
-     Format.fprintf ppf "@[<4>If(@,";
+     Format.fprintf ppf "@[<4>If(";
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [tblock; fblock];
      Format.fprintf ppf "@])@]"
 and pp_directive_list ppf directives =
-  Format.fprintf ppf "@[<1>(@,";
+  Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
   Format.fprintf ppf ")@]"
 
@@ -68,33 +67,25 @@ let rec pp_value ppf value = match value with
   | Unit -> Format.fprintf ppf "()"
   | Bool b -> Format.fprintf ppf "%B" b
   | Int i -> Format.fprintf ppf "%d" i
-  | Func (binds, params, body) ->
-     Format.fprintf ppf "@[<4>Func(@,%d,@ %d" binds params;
+  | Func (params, locals, body) ->
+     Format.fprintf ppf "@[<4>Func(%d,@ " params;
+     pp_value_list ppf locals;
      list_sep ppf ();
      pp_directive_list ppf body;
      Format.fprintf ppf ")@]"
-  | Lambda (params, captures, body) ->
-     Format.fprintf ppf "@[<4>Lambda(@,%d,@ " params;
-     list_sep ppf ();
-     pp_value_list ppf captures;
-     list_sep ppf ();
-     pp_directive_list ppf body;
-     Format.fprintf ppf ")@]"
-  | Builtin _ -> Format.fprintf ppf "Builtin"
 and pp_value_list ppf values =
-  Format.fprintf ppf "@[<1>(@,";
+  Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_value ppf values;
   Format.fprintf ppf ")@]"
 
 (* Switch to pp_value_list and make pp_env_list so can add debug print to driver - fibb broken *)
 let pp_env ppf env =
-  let list_list = List.map Array.to_list [env.captures; Array.map (!) env.binds; env.args] in
-  Format.fprintf ppf "@[<4>(@,";
-  Format.pp_print_list ~pp_sep:list_sep pp_value_list ppf list_list;
+  Format.fprintf ppf "@[<1>(%d,@ " env.locals;
+  pp_value_list ppf (Array.to_list (Array.map (!) env.stack));
   Format.fprintf ppf ")@]"
 
 let pp_env_list ppf envs =
-  Format.fprintf ppf "@[<1>(@,";
+  Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_env ppf envs;
   Format.fprintf ppf ")@]"
 
@@ -112,11 +103,11 @@ let step directives values envs = match directives, values, envs with
   | Expr (FuncExpr (_, id)) :: rest, _, _ ->
      rest, Array.get !funcs id :: values, envs
   | Expr (EnvExpr (_, id)) :: rest, _, env :: _ ->
-     rest, Array.get env.captures id :: values, envs
+     rest, !(Array.get env.stack id) :: values, envs
   | Expr (BoundExpr (_, id)) :: rest, _, env :: _->
-     rest, !(Array.get env.binds id) :: values, envs
+     rest, !(Array.get env.stack id) :: values, envs
   | Expr (ArgExpr (_, id)) :: rest, _, env :: _ ->
-     rest, Array.get env.args id :: values, envs
+     rest, !(Array.get env.stack (id + env.locals)) :: values, envs
   | Expr (IntExpr (_, i)) :: rest, _, _ ->
      rest, Int i :: values, envs
   | Expr (BoolExpr (_, b)) :: rest, _, _ ->
@@ -177,33 +168,23 @@ let step directives values envs = match directives, values, envs with
 
   | Capture (params, captures, body) :: rest, _, _ ->
      let captures', values' = take_rev captures [] values in
-     rest, Lambda (params, captures', body) :: values', envs
+     rest, Func (params, captures', body) :: values', envs
+  | Builtin f :: rest, _, env :: _ ->
+     rest, f env :: values, envs
 
-  | Call args :: rest, _, env :: _ ->
+  | Call args :: rest, _, _ ->
      let args', values' = take_rev args [] values in
-     let callee = List.hd values' in
-     let values'' = List.tl values' in
-     (match callee with
-      | Lambda (params, captures, body)
-           when params = args ->
-         let env' = { captures = Array.of_list captures
-                    ; binds = Array.of_list []
-                    ; args = Array.of_list args'
+     (match values' with
+      | Func (params, locals, body) :: values'' when params = args ->
+         let env' = { stack = Array.of_list (List.map ref (locals @ args'))
+                    ; locals = List.length locals
                     } in
          body @ rest, values'', env' :: envs
-      | Func (binds, params, body)
-           when params = args ->
-         let env' = { captures = Array.of_list []
-                    ; binds = Array.init binds (fun _ -> ref None)
-                    ; args = Array.of_list args'
-                    } in
-         body @ rest, values'', env' :: envs
-      | Builtin f ->
-         rest, f args' :: values'', env :: envs
-      | _ -> failwith "type mismatch")
+      | _ -> failwith "type mismatch"
+     )
 
   | Bind id :: rest, v :: values', env :: _ ->
-     (Array.get env.binds id) := v;
+     (Array.get env.stack id) := v;
      rest, None :: values', envs
   | If (tblock, _) :: rest, Bool true :: values', _ ->
      tblock @ rest, values', envs
@@ -217,11 +198,11 @@ let driver debug env directives =
   let rec iter (directives, values, envs) =
     if debug then begin
         incr stage;
-        Format.fprintf Format.std_formatter "@[<4>Step %d: (@,Directives:@," !stage;
+        Format.fprintf Format.std_formatter "@[<4>Step %d: (@," !stage;
         pp_directive_list Format.std_formatter directives;
-        Format.fprintf Format.std_formatter ",@ Values:@,";
+        Format.fprintf Format.std_formatter ",@ @,";
         pp_value_list Format.std_formatter values;
-        Format.fprintf Format.std_formatter ",@ Environments:@,";
+        Format.fprintf Format.std_formatter ",@ @,";
         pp_env_list Format.std_formatter envs;
         Format.fprintf Format.std_formatter ")@]@\n" end;
     match directives with
@@ -231,21 +212,19 @@ let driver debug env directives =
 
 module FuncMap = Map.Make(String)
 
-let print_int x_list = match x_list with
-  | [Int x] -> print_int x; print_newline(); Unit
+let print_int env = match !(env.stack.(0)) with
+  | Int x -> print_int x; print_newline(); Unit
   | _ -> failwith "type mismatch"
 
-let print_bool b_list = match b_list with
-  | [Bool b] -> print_string (string_of_bool b); print_newline (); Unit
+let print_bool env = match !(env.stack.(0)) with
+  | Bool b -> print_string (string_of_bool b); print_newline (); Unit
   | _ -> failwith "type mismatch"
 
-let input_int empty_list = match empty_list with
-  | [] -> Int (read_int ())
-  | _ -> failwith "type mismatch"
+let input_int _ = Int (read_int ())
 
-let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Builtin print_int
-                                           ; "print_bool", Builtin print_bool
-                                           ; "input_int", Builtin input_int])
+let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Func (1, [], [Builtin print_int])
+                                           ; "print_bool", Func (1, [], [Builtin print_bool])
+                                           ; "input_int", Func (0, [], [Builtin input_int])])
 
 let interpret_func func =
   if Option.is_none func.body then
@@ -254,19 +233,19 @@ let interpret_func func =
     else
       failwith "built-in has no definition"
   else
-    Func (func.num_locals, func.num_params, make_block (Option.get func.body))
+    let locals = List.init func.num_locals (fun _ -> None) in
+    Func (func.num_params, locals, make_block (Option.get func.body))
 
 let interpret debug program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun a b -> compare a.id b.id) program';
   funcs := Array.map interpret_func program';
   let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
-  let env = { captures = Array.of_list []
-            ; binds = Array.init main.num_locals (fun _ -> ref None)
-            ; args = Array.of_list []
+  let env = { stack = Array.init main.num_locals (fun _ -> ref None)
+            ; locals = main.num_locals
             } in
   match Array.get !funcs main.id with
-  | Func(_, 0, body) ->
+  | Func(0, _, body) ->
      (match driver debug env body with
       | [None] -> ()
       | _ -> failwith "type mismatch")
