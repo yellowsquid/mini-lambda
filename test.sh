@@ -22,8 +22,10 @@ if ! env "$DIR/lambda" -o "$TMP/exec" "$SOURCE"; then
     exit 2
 fi
 
+MAX_INTERP=5
+
 for c in $CASES ; do
-    for (( i=0; i < 5; i++ )) ; do
+    for (( i=0; i <= MAX_INTERP; i++ )) ; do
         if diff <(env "$DIR/lambda" -i "$i" "$SOURCE" <"$c.in") "$c.out"; then
             echo "PASS: $c-$i"
         else

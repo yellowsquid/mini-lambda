@@ -1,37 +1,57 @@
 open Typed_ast
 
 type directive
+  (* Adds two values *)
   = Add
+  (* Subs two values *)
   | Sub
+  (* Tests two values *)
   | Equal
+  (* Ands two values *)
   | And
+  (* Ors two values *)
   | Or
+  (* Inverts a value *)
   | Invert
+  (* Pushes function *)
   | PushFunc of int
+  (* Pushes local value *)
   | PushLocal of int
+  (* Pushes argument *)
   | PushArg of int
+  (* Pushes constant value *)
   | Push of value
+  (* Pops value *)
   | Pop
+  (* Pushes environment *)
   | PopEnv
-  | Seq
-  (* Params * Locals * Body *)
-  | Capture of int * int * directive list
+  (* Lambda capture: #params * #locals * block *)
+  | Capture of int * int * int
+  (* Calls builtin function *)
   | Builtin of string
-  | Call of int
+  (* Calls function: #args * return block *)
+  | Call of int * int
+  (* Jumps to return block in env *)
+  | Return
+  (* Jumps to constant block *)
+  | Jump of int
+  (* Binds local to value *)
   | Bind of int
-  | If of directive list * directive list
+  (* Conditional jump: true block * false block *)
+  | If of int * int
 and value
-  = None
-  | Unit
+  = Unit
   | Bool of bool
   | Int of int
-  (* Params * Locals * Body *)
-  | Func of int * value list  * directive list
+  (* Params * Locals * Block *)
+  | Func of int * value list  * int
 and env =
-  { locals: int
+  { return: int
+  ; locals: int
   ; stack: value ref array
   }
 
+module BlockMap = Map.Make(Int)
 module FuncMap = Map.Make(String)
 
 let list_sep ppf _ = Format.fprintf ppf ",@ "
@@ -52,24 +72,20 @@ let rec pp_directive ppf directive = match directive with
      Format.fprintf ppf ")@]"
   | Pop -> Format.fprintf ppf "Pop"
   | PopEnv -> Format.fprintf ppf "PopEnv"
-  | Seq -> Format.fprintf ppf "Seq"
   | Capture (params, captures, body) ->
-     Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
-     pp_directive_list ppf body;
-     Format.fprintf ppf ")@]"
+     Format.fprintf ppf "Capture(%d, %d, %d)" params captures body;
   | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
-  | Call args -> Format.fprintf ppf "Call(%d)" args
+  | Call (args, return) -> Format.fprintf ppf "Call(%d, %d)" args return
+  | Return -> Format.fprintf ppf "Return"
+  | Jump block -> Format.fprintf ppf "Jump(%d)" block
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
   | If (tblock, fblock) ->
-     Format.fprintf ppf "@[<4>If(";
-     Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [tblock; fblock];
-     Format.fprintf ppf "@])@]"
+     Format.fprintf ppf "If(%d, %d)" tblock fblock
 and pp_directive_list ppf directives =
   Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
   Format.fprintf ppf ")@]"
 and pp_value ppf value = match value with
-  | None -> Format.fprintf ppf "None"
   | Unit -> Format.fprintf ppf "()"
   | Bool b -> Format.fprintf ppf "%B" b
   | Int i -> Format.fprintf ppf "%d" i
@@ -77,15 +93,14 @@ and pp_value ppf value = match value with
      Format.fprintf ppf "@[<4>Func(%d,@ " params;
      pp_value_list ppf locals;
      list_sep ppf ();
-     pp_directive_list ppf body;
-     Format.fprintf ppf ")@]"
+     Format.fprintf ppf "%d)@]" body
 and pp_value_list ppf values =
   Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_value ppf values;
   Format.fprintf ppf ")@]"
 
 let pp_env ppf env =
-  Format.fprintf ppf "@[<1>(%d,@ " env.locals;
+  Format.fprintf ppf "@[<1>(%d,@ %d,@ " env.return env.locals;
   pp_value_list ppf (Array.to_list (Array.map (!) env.stack));
   Format.fprintf ppf ")@]"
 
@@ -110,6 +125,19 @@ let builtins = FuncMap.of_seq (List.to_seq [ "print_int", (print_int, 1)
 
 let funcs = ref (Array.of_list [])
 
+let add_block, get_block =
+  let block_id = ref 0 in
+  let next_block () =
+    let block = !block_id in
+    incr block_id; block in
+  let blocks = ref (BlockMap.add (-1) [] BlockMap.empty) in
+  let eval_add block =
+    let this_block = next_block () in
+    blocks := BlockMap.add this_block block !blocks;
+    this_block in
+  let eval_get block = BlockMap.find block !blocks in
+  eval_add, eval_get
+
 let rec flatten_expr acc expr = match expr with
   | FuncExpr (_, id) -> PushFunc id :: acc
   | EnvExpr (_, id) -> PushLocal id :: acc
@@ -124,19 +152,23 @@ let rec flatten_expr acc expr = match expr with
   | OrExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Or :: acc) rhs) lhs
   | InvertExpr (_, e) -> flatten_expr (Invert :: acc) e
   | LambdaExpr (_, params, captures, body) ->
-     let acc' = Capture (params, Array.length captures, flatten_expr [] body) :: acc in
+     let captured = add_block (flatten_expr [Return] body) in
+     let acc' = Capture (params, Array.length captures, captured) :: acc in
      List.fold_left flatten_expr acc' (List.rev (Array.to_list captures))
   | CallExpr (_, callee, args) ->
-     let acc' = Call (Array.length args) :: PopEnv :: acc in
-     flatten_expr (List.fold_left flatten_expr acc' (List.rev (Array.to_list args))) callee
+     let return = add_block (PopEnv :: acc) in
+     let call' = Call (Array.length args, return) in
+     flatten_expr (List.fold_left flatten_expr [call'] (List.rev (Array.to_list args))) callee
 
 let rec flatten_stmt acc stmt = match stmt with
-  | ReturnStmt (_, e) -> flatten_expr acc e
-  | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
+  | ReturnStmt (_, e) -> flatten_expr (Return :: acc) e (* Safe as return clears stack *)
+  | ExprStmt (_, e) -> flatten_expr (Pop :: acc) e
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
   | IfStmt (_, cond, tblock, fblock) ->
-     flatten_expr (If (make_block tblock, make_block fblock) :: acc) cond
-and make_block stmts = List.flatten (List.map (flatten_stmt [Seq]) stmts) @ [Push None]
+     let continue = add_block acc in
+     flatten_expr [If (make_block tblock continue, make_block fblock continue)] cond
+and make_block stmts continue =
+  add_block (List.fold_left flatten_stmt [Jump continue] (List.rev stmts))
 
 let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
@@ -145,6 +177,26 @@ let rec take_rev n acc stack = match n, stack with
 
 let step directives values envs = match directives, values, envs with
   | [], values, envs -> [], values, envs
+
+  | Call (args, return) :: _, _, _ ->
+     let args', values' = take_rev args [] values in
+     (match values' with
+      | Func (params, locals, body) :: values'' when params = args ->
+         let env' = { return = return
+                    ; stack = Array.of_list (List.map ref (locals @ args'))
+                    ; locals = List.length locals
+                    } in
+         get_block body, values'', env' :: envs
+      | _ -> failwith "type mismatch"
+     )
+
+  | Return :: _, _, env :: _ -> get_block env.return, values, envs
+  | Jump block :: _, _, _ -> get_block block, values, envs
+
+  | If (tblock, _) :: _, Bool true :: values', _ -> get_block tblock, values', envs
+  | If (_, fblock) :: _, Bool false :: values', _ -> get_block fblock, values', envs
+
+
   | Add :: rest, Int b :: Int a :: values', _ -> rest, Int (a + b) :: values', envs
   | Sub :: rest, Int b :: Int a :: values', _ -> rest, Int (a - b) :: values', envs
   | Equal :: rest, Int b :: Int a :: values', _ -> rest, Bool (a = b) :: values', envs
@@ -160,8 +212,6 @@ let step directives values envs = match directives, values, envs with
   | Push v :: rest, _, _ -> rest, v :: values, envs
   | Pop :: rest, _ :: values', _ -> rest, values', envs
   | PopEnv :: rest, _, _ :: envs' -> rest, values, envs'
-  | Seq :: rest, None :: values', _ -> rest, values', envs
-  | Seq :: _ :: rest, _, _ -> rest, values, envs
 
   | Capture (params, captures, body) :: rest, _, _ ->
      let captures', values' = take_rev captures [] values in
@@ -169,22 +219,9 @@ let step directives values envs = match directives, values, envs with
   | Builtin name :: rest, _, env :: _ ->
      rest, (fst (FuncMap.find name builtins)) env :: values, envs
 
-  | Call args :: rest, _, _ ->
-     let args', values' = take_rev args [] values in
-     (match values' with
-      | Func (params, locals, body) :: values'' when params = args ->
-         let env' = { stack = Array.of_list (List.map ref (locals @ args'))
-                    ; locals = List.length locals
-                    } in
-         body @ rest, values'', env' :: envs
-      | _ -> failwith "type mismatch"
-     )
-
   | Bind id :: rest, v :: values', env :: _ ->
      (Array.get env.stack id) := v;
-     rest, None :: values', envs
-  | If (tblock, _) :: rest, Bool true :: values', _ -> tblock @ rest, values', envs
-  | If (_, fblock) :: rest, Bool false :: values', _ -> fblock @ rest, values', envs
+     rest, values', envs
   | _, _, _ -> failwith "type mismatch"
 
 let stage = ref 0
@@ -210,22 +247,26 @@ let interpret_func func =
   if Option.is_none func.body then
     if FuncMap.mem func.name builtins then
       let _, params = FuncMap.find func.name builtins in
-      Func (params, [], [Builtin func.name; Seq; Push None])
+      Func (params, [], add_block [Builtin func.name; Return])
     else
       failwith "built-in has no definition"
   else
-    let locals = List.init func.num_locals (fun _ -> None) in
-    Func (func.num_params, locals, make_block (Option.get func.body))
+    let locals = List.init func.num_locals (fun _ -> Unit) in
+    let block = List.fold_left flatten_stmt [Push Unit; Return] (List.rev (Option.get func.body)) in
+    Func (func.num_params, locals, add_block block)
 
 let interpret debug program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun a b -> compare a.id b.id) program';
   funcs := Array.map interpret_func program';
   let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
-  let env = { stack = Array.of_list []; locals = 0 } in
+  let env = { return = -1
+            ; stack = Array.init main.num_locals (fun _ -> ref Unit)
+            ; locals = main.num_locals
+            } in
   match Array.get !funcs main.id with
-  | Func(0, binds, body) ->
-     (match driver debug env [Push (Func (0, binds, body)); Call 0] with
-      | [None] -> ()
+  | Func(0, _, body) ->
+     (match driver debug env (get_block body) with
+      | [Unit] -> ()
       | _ -> failwith "type mismatch")
   | _ -> failwith "main not a function"
