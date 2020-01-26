@@ -166,7 +166,7 @@ let interpret_func func =
          interpret_stmts_cnt env' (Option.get func.body) get_value
     in Lambda eval
 
-let interpret program =
+let interpret _debug program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun (a: Typed_ast.func) b -> compare a.id b.id) program';
   let funcs = Array.map interpret_func program' in

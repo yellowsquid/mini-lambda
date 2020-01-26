@@ -1,4 +1,5 @@
 func print_int(x);
+func input_int();
 
 func mul(a, b) {
     if a == 0 {
@@ -19,5 +20,5 @@ func factorial(n) {
 }
 
 func main() {
-    print_int(factorial(5));
+    print_int(factorial(input_int()));
 }

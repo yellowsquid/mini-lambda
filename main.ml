@@ -9,6 +9,7 @@ let compile = ref true
 let in_chan = ref stdin
 let out_chan = ref stdout
 let backend = ref Backend_x86_64.compile
+let interpreter = ref I0.interpret
 let debug = ref false
 
 let usage = "usage: " ^ Sys.argv.(0) ^ "[-o out] [-x86_64] input"
@@ -31,7 +32,15 @@ let speclist =
     , ": debug comments"
     )
   ; ( "-i"
-    , Arg.Unit (fun () -> compile := false)
+    , Arg.Int
+        (fun i ->
+          compile := false;
+          interpreter := match i with
+                         | 1 -> I1.interpret
+                         | 2 -> I2.interpret
+                         | 3 -> I3.interpret
+                         | 4 -> I4.interpret
+                         | _ -> I0.interpret )
     , ": use interpretter"
     )
   ]
@@ -46,7 +55,7 @@ let () =
       let ir = Ir_lowering.lower typed_ast in
       !backend ir !out_chan !debug
     else
-      I4.interpret !debug typed_ast
+      !interpreter !debug typed_ast
   with
   | Lexer.Error(lnum, cnum, chr) ->
     Printf.eprintf "(%d:%d) lexer error: invalid character '%c'\n"

@@ -1,3 +1,3 @@
 exception Error of Typed_ast.loc * string
 
-val interpret : Typed_ast.program -> bool -> unit
+val interpret : bool -> Typed_ast.program -> unit

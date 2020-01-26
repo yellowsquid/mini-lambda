@@ -199,11 +199,11 @@ let interpret_func (func: Typed_ast.func) =
         apply_block env' (Option.get func.body)
     in Lambda(eval)
 
-let interpret (program: Typed_ast.program) debug =
+let interpret debug program  =
   let program' = Array.concat (Array.to_list program) in
-  Array.sort (fun (a: Typed_ast.func) b -> compare a.id b.id) program';
+  Array.sort (fun a b -> compare a.id b.id) program';
   let funcs = Array.map interpret_func  program' in
-  let main = List.find (fun (f: Typed_ast.func) -> f.name = "main") (Array.to_list program') in
+  let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
   let env = { funcs = funcs
             ; captures = Array.of_list []
             ; binds = Array.of_list []

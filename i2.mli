@@ -1,1 +1,1 @@
-val interpret : Typed_ast.program -> unit
+val interpret : bool -> Typed_ast.program -> unit

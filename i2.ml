@@ -157,7 +157,7 @@ let interpret_func func =
   else
     Func (func.num_locals, func.num_params, Option.get func.body)
 
-let interpret program =
+let interpret _bool program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun a b -> compare a.id b.id) program';
   let funcs = Array.map interpret_func program' in

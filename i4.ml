@@ -57,7 +57,7 @@ let rec pp_directive ppf directive = match directive with
      Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
      pp_directive_list ppf body;
      Format.fprintf ppf ")@]"
-  | Builtin _ -> Format.fprintf ppf "Builtin"
+  | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
   | Call args -> Format.fprintf ppf "Call(%d)" args
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
   | If (tblock, fblock) ->

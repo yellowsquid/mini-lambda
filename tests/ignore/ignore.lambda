@@ -1,5 +1,5 @@
 func other(_ignored) {
-    return _ignored + 2;
+    return false;
 }
 
 func main() {
