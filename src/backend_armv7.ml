@@ -6,6 +6,7 @@
  *)
 
 open Ir
+open Ops
 
 let compile_closure out debug { id; num_params; num_locals; name; insts; _ } =
   Printf.fprintf out "\t.text\n";
@@ -71,34 +72,34 @@ let compile_closure out debug { id; num_params; num_locals; name; insts; _ } =
          Printf.fprintf out "__label_%d_%d:\n" i j
       | Jump(i, j) ->
          Printf.fprintf out "\tb __label_%d_%d\n" i j;
-      | Add ->
+      | BinOp Add ->
          Printf.fprintf out "\tpop {r1}\n";
          Printf.fprintf out "\tpop {r2}\n";
          Printf.fprintf out "\tadd r1, r1, r2\n";
          Printf.fprintf out "\tpush {r1}\n";
-      | Sub ->
+      | BinOp Sub ->
          Printf.fprintf out "\tpop {r1}\n";
          Printf.fprintf out "\tpop {r2}\n";
          Printf.fprintf out "\tsub r1, r1, r2\n";
          Printf.fprintf out "\tpush {r1}\n";
-      | And ->
+      | BinOp And ->
          Printf.fprintf out "\tpop{r1}\n";
          Printf.fprintf out "\tpop{r2}\n}";
          Printf.fprintf out "\tand r1, r1, r2\n";
          Printf.fprintf out "\tpush {r1}\n";
-      | Or ->
+      | BinOp Or ->
          Printf.fprintf out "\tpop{r1}\n";
          Printf.fprintf out "\tpop{r2}\n}";
          Printf.fprintf out "\toor r1, r1, r2\n";
          Printf.fprintf out "\tpush {r1}\n";
-      | Equal ->
+      | BinOp Equal ->
          Printf.fprintf out "\tpop {r1}\n";
          Printf.fprintf out "\tpop {r2}\n";
          Printf.fprintf out "\tcmp r1, r2\n";
          Printf.fprintf out "\tmoveq r1, #1\n";
          Printf.fprintf out "\tmovne r1, #0\n";
          Printf.fprintf out "\tpush {r1}\n";
-      | Not ->
+      | UnaryOp Invert ->
          Printf.fprintf out "\tpop{r1}\n";
          Printf.fprintf out "\teor r1, r1, #1\n";
          Printf.fprintf out "\tpush {r1}\n";

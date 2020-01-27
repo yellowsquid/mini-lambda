@@ -44,18 +44,10 @@ let lower program =
             Ir.ConstInt i :: acc
          | BoolExpr(_, b) ->
             (if b then Ir.ConstInt 1 else Ir.ConstInt 0) :: acc
-         | AddExpr(_, lhs, rhs) ->
-            Ir.Add :: lower_expr (lower_expr acc lhs) rhs
-         | SubExpr(_, lhs, rhs) ->
-            Ir.Sub :: lower_expr (lower_expr acc lhs) rhs
-         | EqualExpr(_, lhs, rhs) ->
-            Ir.Equal :: lower_expr (lower_expr acc lhs) rhs
-         | AndExpr(_, lhs, rhs) ->
-            Ir.And :: lower_expr (lower_expr acc lhs) rhs
-         | OrExpr(_, lhs, rhs) ->
-            Ir.Or :: lower_expr (lower_expr acc lhs) rhs
-         | InvertExpr(_, expr) ->
-            Ir.Not :: lower_expr acc expr
+         | BinExpr(_, op, lhs, rhs) ->
+            Ir.BinOp op :: lower_expr (lower_expr acc lhs) rhs
+         | UnaryExpr(_, op, expr) ->
+            Ir.UnaryOp op :: lower_expr acc expr
          | LambdaExpr(_, num_params, env, body) ->
             (* Create a new closure from the body. *)
             let id = new_func_id() in

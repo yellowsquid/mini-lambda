@@ -1,6 +1,7 @@
 (* OCaml interpretter for language *)
 
 open Typed_ast
+open Ops
 
 type value
   = None
@@ -14,6 +15,20 @@ and env =
   ; binds: value ref array
   ; args: value array
   }
+
+
+let do_bin_op op lhs rhs = match op, lhs, rhs with
+  | Add, Int a, Int b -> Int (a + b)
+  | Sub, Int a, Int b -> Int (a - b)
+  | Equal, Int a, Int b -> Bool (a = b)
+  | Equal, Bool a, Bool b -> Bool (a = b)
+  | And, Bool a, Bool b -> Bool (a && b)
+  | Or, Bool a, Bool b -> Bool (a || b)
+  | _, _, _ -> failwith "runtime error"
+
+let do_unary_op op e = match op, e with
+  | Invert, Bool b -> Bool (not b)
+  | _, _ -> failwith "runtime error"
 
 let rec interpret_exprs_cnt env exprs cnt = match exprs with
   (* No expressions so start applying *)
@@ -42,49 +57,20 @@ let rec interpret_exprs_cnt env exprs cnt = match exprs with
   | BoolExpr(_, b) :: rest ->
      let value = Bool b in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
-  (* Push first then second arg then add before applying *)
-  | AddExpr(_, lhs, rhs) :: rest ->
+  (* Push first then second arg then do op before applying *)
+  | BinExpr(_, op, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
-           | [Int a; Int b] -> Int (a + b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
-  (* Push first then second arg then sub before applying *)
-  | SubExpr(_, lhs, rhs) :: rest ->
-     interpret_exprs_cnt env [lhs; rhs] (fun x ->
-         let value = match x with
-           | [Int a; Int b] -> Int (a - b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
-  (* Push first then second arg then equal before applying *)
-  | EqualExpr(_, lhs, rhs) :: rest ->
-     interpret_exprs_cnt env [lhs; rhs] (fun x ->
-         let value = match x with
-           | [Int a; Int b] -> Bool (a = b)
-           | [Bool a; Bool b] -> Bool (a = b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
-  (* Push first then second arg then and before applying *)
-  | AndExpr(_, lhs, rhs) :: rest ->
-     interpret_exprs_cnt env [lhs; rhs] (fun x ->
-         let value = match x with
-           | [Bool a; Bool b] -> Bool (a && b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
-  (* Push first then second arg then or before applying *)
-  | OrExpr(_, lhs, rhs) :: rest ->
-     interpret_exprs_cnt env [lhs; rhs] (fun x ->
-         let value = match x with
-           | [Bool a; Bool b] -> Bool (a || b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+           | [lhs'; rhs'] -> do_bin_op op lhs' rhs'
+           | _ -> failwith "runtime error" in
+         interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
   (* Push first then second arg then invert before applying *)
-  | InvertExpr(_, e) :: rest ->
+  | UnaryExpr(_, op, e) :: rest ->
      interpret_exprs_cnt env [e] (fun x ->
          let value = match x with
-           | [Bool b] -> Bool (not b)
-           | _ -> failwith "type mismatch"
-         in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+           | [e'] -> do_unary_op op e'
+           | _ -> failwith "runtime error" in
+         interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
   (* Capture args then construct function before applying *)
   | LambdaExpr(_, params, captures, body) :: rest ->
      interpret_exprs_cnt env (Array.to_list captures) (fun captures' ->

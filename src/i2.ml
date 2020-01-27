@@ -1,6 +1,7 @@
 (* OCaml interpretter for language *)
 
 open Typed_ast
+open Ops
 
 type value
   = None
@@ -18,18 +19,9 @@ and env =
   }
 
 type cnt
-  = AddOuterCnt of env * expr
-  | AddCnt of int
-  | SubOuterCnt of env * expr
-  | SubCnt of int
-  | EqualOuterCnt of env * expr
-  | EqualIntCnt of int
-  | EqualBoolCnt of bool
-  | AndOuterCnt of env * expr
-  | AndCnt of bool
-  | OrOuterCnt of env * expr
-  | OrCnt of bool
-  | InvertCnt
+  = OuterBinCnt of env * bin_op * expr
+  | InnerBinCnt of bin_op * value
+  | UnaryCnt of unary_op
   | LambdaCnt of env * expr list * value list * int * expr
   | CallCnt of env * expr list
   | ArgsCnt of env * expr list * value list * value
@@ -42,6 +34,20 @@ type step
   = Expr of cnt list * env * expr
   | Stmt of cnt list * env * statement
   | Apply of cnt list * value
+
+
+let do_bin_op op lhs rhs = match op, lhs, rhs with
+  | Add, Int a, Int b -> Int (a + b)
+  | Sub, Int a, Int b -> Int (a - b)
+  | Equal, Int a, Int b -> Bool (a = b)
+  | Equal, Bool a, Bool b -> Bool (a = b)
+  | And, Bool a, Bool b -> Bool (a && b)
+  | Or, Bool a, Bool b -> Bool (a || b)
+  | _, _, _ -> failwith "runtime error"
+
+let do_unary_op op e = match op, e with
+  | Invert, Bool b -> Bool (not b)
+  | _, _ -> failwith "runtime error"
 
 let step config = match config with
   (* Push function to top before applying *)
@@ -57,17 +63,10 @@ let step config = match config with
   (* Push bool to top before applying *)
   | Expr (cnts, _, BoolExpr (_, b)) -> Apply (cnts, Bool b)
   (* Eval the first arg before continuing *)
-  | Expr (cnts, env, AddExpr (_, lhs, rhs)) -> Expr (AddOuterCnt (env, rhs) :: cnts, env, lhs)
-  (* Eval the first arg before continuing *)
-  | Expr (cnts, env, SubExpr (_, lhs, rhs)) -> Expr (SubOuterCnt (env, rhs) :: cnts, env, lhs)
-  (* Eval the first arg before continuing *)
-  | Expr (cnts, env, EqualExpr (_, lhs, rhs)) -> Expr (EqualOuterCnt (env, rhs) :: cnts, env, lhs)
-  (* Eval the first arg before continuing *)
-  | Expr (cnts, env, AndExpr (_, lhs, rhs)) -> Expr (AndOuterCnt (env, rhs) :: cnts, env, lhs)
-  (* Eval the first arg before continuing *)
-  | Expr (cnts, env, OrExpr (_, lhs, rhs)) -> Expr (OrOuterCnt (env, rhs) :: cnts, env, lhs)
+  | Expr (cnts, env, BinExpr (_, op, lhs, rhs)) ->
+     Expr (OuterBinCnt (env, op, rhs) :: cnts, env, lhs)
   (* Eval the arg before continuing *)
-  | Expr (cnts, env, InvertExpr (_, e)) -> Expr (InvertCnt :: cnts, env, e)
+  | Expr (cnts, env, UnaryExpr (_, op, e)) -> Expr (UnaryCnt op :: cnts, env, e)
 
   (* Prepare to capture args *)
   | Expr (cnts, env, LambdaExpr (_, params, captures, body)) ->
@@ -89,31 +88,12 @@ let step config = match config with
   (* Noting to do so done *)
   | Apply ([], value) -> Apply ([], value)
   (* Eval the second arg before continuing *)
-  | Apply (AddOuterCnt (env, rhs) :: rest, Int a) -> Expr (AddCnt a :: rest, env, rhs)
-  (* Add and apply *)
-  | Apply (AddCnt a :: rest, Int b) -> Apply (rest, Int (a + b))
-  (* Eval the second arg before continuing *)
-  | Apply (SubOuterCnt (env, rhs) :: rest, Int a) -> Expr (SubCnt a :: rest, env, rhs)
-  (* Sub and apply *)
-  | Apply (SubCnt a :: rest, Int b) -> Apply (rest, Int (a - b))
-  (* Eval the second arg before continuing *)
-  | Apply (EqualOuterCnt (env, rhs) :: rest, Int a) -> Expr (EqualIntCnt a :: rest, env, rhs)
-  (* Eval the second arg before continuing *)
-  | Apply (EqualOuterCnt (env, rhs) :: rest, Bool a) -> Expr (EqualBoolCnt a :: rest, env, rhs)
-  (* Equal and apply *)
-  | Apply (EqualIntCnt a :: rest, Int b) -> Apply (rest, Bool (a = b))
-  (* Equal and apply *)
-  | Apply (EqualBoolCnt a :: rest, Bool b) -> Apply (rest, Bool (a = b))
-  (* Eval the second arg before continuing *)
-  | Apply (AndOuterCnt (env, rhs) :: rest, Bool a) -> Expr (AndCnt a :: rest, env, rhs)
-  (* And and apply *)
-  | Apply (AndCnt a :: rest, Bool b) -> Apply (rest, Bool (a && b))
-  (* Eval the second arg before continuing *)
-  | Apply (OrOuterCnt (env, rhs) :: rest, Bool a) -> Expr (OrCnt a :: rest, env, rhs)
-  (* And and apply *)
-  | Apply (OrCnt a :: rest, Bool b) -> Apply (rest, Bool (a || b))
-  (* Invert and apply *)
-  | Apply (InvertCnt :: rest, Bool a) -> Apply (rest, Bool (not a))
+  | Apply (OuterBinCnt (env, op, rhs) :: rest, lhs) ->
+     Expr (InnerBinCnt (op, lhs) :: rest, env, rhs)
+  (* Compute and apply *)
+  | Apply (InnerBinCnt (op, lhs) :: rest, rhs) -> Apply (rest, do_bin_op op lhs rhs)
+  (* Compute and apply *)
+  | Apply (UnaryCnt op :: rest, v) -> Apply (rest, do_unary_op op v)
 
   (* All args captured so push and apply *)
   | Apply (LambdaCnt (_, [], captured, p, body) :: rest, None) ->

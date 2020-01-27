@@ -13,6 +13,7 @@
  *)
 
 open Ast
+open Ops
 
 exception Error of Ast.loc * string
 
@@ -135,6 +136,16 @@ let instantiate ty =
     | TyVar _ -> failwith "should have been generalised"
   in loop ty
 
+let get_bin_type op = match op with
+  | Add -> TyInt, TyInt, TyInt
+  | Sub -> TyInt, TyInt, TyInt
+  | Equal -> let ty = new_ty_var () in ty, ty, TyBool
+  | And -> TyBool, TyBool, TyBool
+  | Or -> TyBool, TyBool, TyBool
+
+let get_unary_type op = match op with
+  | Invert -> TyBool, TyBool
+
 (* Checks the type of an expression *)
 let rec check_expr scope expr = match expr with
   | IdentExpr(loc, name) ->
@@ -186,41 +197,18 @@ let rec check_expr scope expr = match expr with
      Typed_ast.IntExpr(loc, i), TyInt
   | BoolExpr(loc, b) ->
      Typed_ast.BoolExpr(loc, b), TyBool
-  | AddExpr(loc, lhs, rhs) ->
+  | BinExpr(loc, op, lhs, rhs) ->
+     let ty_one, ty_two, ty_ret = get_bin_type op in
      let lhs', ty_lhs = check_expr scope lhs in
-     unify loc ty_lhs TyInt;
+     unify loc ty_lhs ty_one;
      let rhs', ty_rhs = check_expr scope rhs in
-     unify loc ty_rhs TyInt;
-     Typed_ast.AddExpr(loc, lhs', rhs'), TyInt
-  | SubExpr(loc, lhs, rhs) ->
-     let lhs', ty_lhs = check_expr scope lhs in
-     unify loc ty_lhs TyInt;
-     let rhs', ty_rhs = check_expr scope rhs in
-     unify loc ty_rhs TyInt;
-     Typed_ast.SubExpr(loc, lhs', rhs'), TyInt
-  | EqualExpr(loc, lhs, rhs) ->
-     let ty = new_ty_var () in
-     let lhs', ty_lhs = check_expr scope lhs in
-     unify loc ty_lhs ty;
-     let rhs', ty_rhs = check_expr scope rhs in
-     unify loc ty_rhs ty;
-     Typed_ast.EqualExpr(loc, lhs', rhs'), TyBool
-  | AndExpr(loc, lhs, rhs) ->
-     let lhs', ty_lhs = check_expr scope lhs in
-     unify loc ty_lhs TyBool;
-     let rhs', ty_rhs = check_expr scope rhs in
-     unify loc ty_rhs TyBool;
-     Typed_ast.AndExpr(loc, lhs', rhs'), TyBool
-  | OrExpr(loc, lhs, rhs) ->
-     let lhs', ty_lhs = check_expr scope lhs in
-     unify loc ty_lhs TyBool;
-     let rhs', ty_rhs = check_expr scope rhs in
-     unify loc ty_rhs TyBool;
-     Typed_ast.OrExpr(loc, lhs', rhs'), TyBool
-  | InvertExpr(loc, arg) ->
+     unify loc ty_rhs ty_two;
+     Typed_ast.BinExpr(loc, op, lhs', rhs'), ty_ret
+  | UnaryExpr(loc, op, arg) ->
+     let ty_arg, ty_ret = get_unary_type op in
      let arg', ty = check_expr scope arg in
-     unify loc ty TyBool;
-     Typed_ast.InvertExpr(loc, arg'), TyBool
+     unify loc ty ty_arg;
+     Typed_ast.UnaryExpr(loc, op, arg'), ty_ret
   | LambdaExpr(loc, params, body) ->
      let args, ty_args =
        List.fold_left
@@ -319,13 +307,9 @@ let rec find_refs_expr bound acc expr
      acc
   | BoolExpr(_, _) ->
      acc
-  | AddExpr(_, lhs, rhs)
-    | SubExpr(_, lhs, rhs)
-    | EqualExpr(_, lhs, rhs)
-    | AndExpr(_, lhs, rhs)
-    | OrExpr(_, lhs, rhs) ->
+  | BinExpr(_, _, lhs, rhs) ->
      find_refs_expr bound (find_refs_expr bound acc rhs) lhs
-  | InvertExpr(_, rhs) -> find_refs_expr bound acc rhs
+  | UnaryExpr(_, _, rhs) -> find_refs_expr bound acc rhs
   | LambdaExpr(_, params, body) ->
      find_refs_expr (List.append params bound) acc body
   | CallExpr(_, callee, args) ->

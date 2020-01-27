@@ -5,7 +5,8 @@
  */
 
 %{
-open Ast
+    open Ast
+    open Ops
 %}
 
 %token <int> INT
@@ -66,12 +67,8 @@ if_statement:
 
 expr:
   | unary_expr { $1 }
-  | expr PLUS unary_expr { AddExpr($startpos, $1, $3) }
-  | expr MINUS unary_expr { SubExpr($startpos, $1, $3) }
-  | expr EQUAL unary_expr { EqualExpr($startpos, $1, $3) }
-  | expr NEQUAL unary_expr { InvertExpr($startpos, EqualExpr($startpos, $1, $3))}
-  | expr AND unary_expr { AndExpr($startpos, $1, $3) }
-  | expr OR unary_expr { OrExpr($startpos, $1, $3) }
+  | expr NEQUAL unary_expr { UnaryExpr($startpos, Invert, BinExpr($startpos, Equal, $1, $3)) }
+  | expr bin_op unary_expr { BinExpr($startpos, $2, $1, $3) }
 
 unary_expr:
   | LAMBDA
@@ -80,7 +77,7 @@ unary_expr:
     body = postfix_expr;
     { LambdaExpr($startpos, params, body) }
   | postfix_expr { $1 }
-  | INVERT unary_expr { InvertExpr($startpos, $2) }
+  | unary_op unary_expr { UnaryExpr($startpos, $1, $2) }
 
 postfix_expr:
   | primary_expr { $1 }
@@ -97,3 +94,13 @@ primary_expr:
 named:
   | IDENT { $1 }
   | IGNORE { $1 }
+
+bin_op:
+  | PLUS { Add }
+  | MINUS { Sub }
+  | EQUAL { Equal }
+  | AND { And }
+  | OR { Or }
+
+unary_op:
+  | INVERT { Invert }

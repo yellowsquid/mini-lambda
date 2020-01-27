@@ -1,12 +1,9 @@
 open Typed_ast
+open Ops
 
 type directive
-  = Add
-  | Sub
-  | Equal
-  | And
-  | Or
-  | Invert
+  = BinOp of bin_op
+  | UnaryOp of unary_op
   | PushFunc of int
   | PushLocal of int
   | PushArg of int
@@ -35,15 +32,24 @@ and env =
 
 module FuncMap = Map.Make(String)
 
+let do_bin_op op lhs rhs = match op, lhs, rhs with
+  | Add, Int a, Int b -> Int (a + b)
+  | Sub, Int a, Int b -> Int (a - b)
+  | Equal, Int a, Int b -> Bool (a = b)
+  | Equal, Bool a, Bool b -> Bool (a = b)
+  | And, Bool a, Bool b -> Bool (a && b)
+  | Or, Bool a, Bool b -> Bool (a || b)
+  | _, _, _ -> failwith "runtime error"
+
+let do_unary_op op e = match op, e with
+  | Invert, Bool b -> Bool (not b)
+  | _, _ -> failwith "runtime error"
+
 let list_sep ppf _ = Format.fprintf ppf ",@ "
 
 let rec pp_directive ppf directive = match directive with
-  | Add -> Format.fprintf ppf "Add"
-  | Sub -> Format.fprintf ppf "Sub"
-  | Equal -> Format.fprintf ppf "Equal"
-  | And -> Format.fprintf ppf "And"
-  | Or -> Format.fprintf ppf "Or"
-  | Invert -> Format.fprintf ppf "Invert"
+  | BinOp op -> Format.fprintf ppf "BinOp(%s)" (string_of_bin_op op)
+  | UnaryOp op -> Format.fprintf ppf "UnaryOp(%s)" (string_of_unary_op op)
   | PushFunc i -> Format.fprintf ppf "PushFunc(%d)" i
   | PushLocal i -> Format.fprintf ppf "PushLocal(%d)" i
   | PushArg i -> Format.fprintf ppf "PushArg(%d)" i
@@ -125,18 +131,10 @@ let rec flatten_expr acc expr = match expr with
   | IntExpr (_, i) -> Push (Int i) :: acc
   (* Push bool to top *)
   | BoolExpr (_, b) -> Push (Bool b) :: acc
-  (* Push first arg then second then add *)
-  | AddExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Add :: acc) rhs) lhs
-  (* Push first arg then second then sub *)
-  | SubExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Sub :: acc) rhs) lhs
-  (* Push first arg then second then equal *)
-  | EqualExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Equal :: acc) rhs) lhs
-  (* Push first arg then second then and *)
-  | AndExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (And :: acc) rhs) lhs
-  (* Push first arg then second then or *)
-  | OrExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Or :: acc) rhs) lhs
-  (* Push arg then invert *)
-  | InvertExpr (_, e) -> flatten_expr (Invert :: acc) e
+  (* Push first arg then second then compute *)
+  | BinExpr (_, op, lhs, rhs) -> flatten_expr (flatten_expr (BinOp op :: acc) rhs) lhs
+  (* Push arg then compute *)
+  | UnaryExpr (_, op, e) -> flatten_expr (UnaryOp op :: acc) e
   (* Evaluate args then capture as lambda *)
   | LambdaExpr (_, params, captures, body) ->
      let acc' = Capture (params, Array.length captures, flatten_expr [] body) :: acc in
@@ -168,14 +166,10 @@ let step directives values envs = match directives, values, envs with
   (* Nothing to do so we're done *)
   | [], values, envs -> [], values, envs
 
-  (* Self-documenting *)
-  | Add :: rest, Int b :: Int a :: values', _ -> rest, Int (a + b) :: values', envs
-  | Sub :: rest, Int b :: Int a :: values', _ -> rest, Int (a - b) :: values', envs
-  | Equal :: rest, Int b :: Int a :: values', _ -> rest, Bool (a = b) :: values', envs
-  | Equal :: rest, Bool b :: Bool a :: values', _ -> rest, Bool (a = b) :: values', envs
-  | And :: rest, Bool b :: Bool a :: values', _ -> rest, Bool (a && b) :: values', envs
-  | Or :: rest, Bool b :: Bool a :: values', _ -> rest, Bool (a || b) :: values', envs
-  | Invert :: rest, Bool b :: values', _ -> rest, Bool (not b) :: values', envs
+  (* Compute binary op then continue *)
+  | BinOp op :: rest, rhs :: lhs :: values', _ -> rest, do_bin_op op lhs rhs :: values', envs
+  (* Compute unary op then continue *)
+  | UnaryOp op :: rest, v :: values', _ -> rest, do_unary_op op v :: values', envs
 
   (* Push a function *)
   | PushFunc id :: rest, _, _ -> rest, Array.get !funcs id :: values, envs

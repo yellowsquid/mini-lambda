@@ -1,14 +1,11 @@
 open Typed_ast
+open Ops
 
 type directive
   = Expr of expr
   | Stmt of statement
-  | Add
-  | Sub
-  | Equal
-  | And
-  | Or
-  | Invert
+  | BinOp of bin_op
+  | UnaryOp of unary_op
   | Pop
   | PopEnv
   | PushNone
@@ -31,17 +28,26 @@ and env =
   ; stack: value ref array
   }
 
+let do_bin_op op lhs rhs = match op, lhs, rhs with
+  | Add, Int a, Int b -> Int (a + b)
+  | Sub, Int a, Int b -> Int (a - b)
+  | Equal, Int a, Int b -> Bool (a = b)
+  | Equal, Bool a, Bool b -> Bool (a = b)
+  | And, Bool a, Bool b -> Bool (a && b)
+  | Or, Bool a, Bool b -> Bool (a || b)
+  | _, _, _ -> failwith "runtime error"
+
+let do_unary_op op e = match op, e with
+  | Invert, Bool b -> Bool (not b)
+  | _, _ -> failwith "runtime error"
+
 let list_sep ppf _ = Format.fprintf ppf ",@ "
 
 let rec pp_directive ppf directive = match directive with
   | Expr e -> Format.fprintf ppf "@[<4>Expr("; pp_expr ppf e; Format.fprintf ppf ")@]"
   | Stmt s -> Format.fprintf ppf "@[<4>Stmt("; pp_stmt ppf s; Format.fprintf ppf ")@]"
-  | Add -> Format.fprintf ppf "Add"
-  | Sub -> Format.fprintf ppf "Sub"
-  | Equal -> Format.fprintf ppf "Equal"
-  | And -> Format.fprintf ppf "And"
-  | Or -> Format.fprintf ppf "Or"
-  | Invert -> Format.fprintf ppf "Invert"
+  | BinOp op -> Format.fprintf ppf "BinOp(%s)" (string_of_bin_op op);
+  | UnaryOp op -> Format.fprintf ppf "UnaryOp(%s)" (string_of_unary_op op);
   | Pop -> Format.fprintf ppf "Pop"
   | PopEnv -> Format.fprintf ppf "PopEnv"
   | PushNone -> Format.fprintf ppf "PushNone"
@@ -118,24 +124,12 @@ let step directives values envs = match directives, values, envs with
   (* Push bool to top *)
   | Expr (BoolExpr (_, b)) :: rest, _, _ ->
      rest, Bool b :: values, envs
-  (* Push first arg then second arg then add *)
-  | Expr (AddExpr (_, lhs, rhs)) :: rest, _, _ ->
-     Expr lhs :: Expr rhs :: Add :: rest, values, envs
-  (* Push first arg then second arg then sub *)
-  | Expr (SubExpr (_, lhs, rhs)) :: rest, _, _ ->
-     Expr lhs :: Expr rhs :: Sub :: rest, values, envs
-  (* Push first arg then second arg then equal *)
-  | Expr (EqualExpr (_, lhs, rhs)) :: rest, _, _ ->
-     Expr lhs :: Expr rhs :: Equal :: rest, values, envs
-  (* Push first arg then second arg then and *)
-  | Expr (AndExpr (_, lhs, rhs)) :: rest, _, _ ->
-     Expr lhs :: Expr rhs :: And :: rest, values, envs
-  (* Push first arg then second arg then or *)
-  | Expr (OrExpr (_, lhs, rhs)) :: rest, _, _ ->
-     Expr lhs :: Expr rhs :: Or :: rest, values, envs
-  (* Push arg then invert *)
-  | Expr (InvertExpr (_, e)) :: rest, _, _ ->
-     Expr e :: Invert :: rest, values, envs
+  (* Push first arg then second arg then compute *)
+  | Expr (BinExpr (_, op, lhs, rhs)) :: rest, _, _ ->
+     Expr lhs :: Expr rhs :: BinOp op :: rest, values, envs
+  (* Push arg then compute *)
+  | Expr (UnaryExpr (_, op, e)) :: rest, _, _ ->
+     Expr e :: UnaryOp op :: rest, values, envs
   (* Evaluate args then capture as lambda *)
   | Expr (LambdaExpr (_, params, captures, body)) :: rest, _, _ ->
      let capturing = List.map (fun e -> Expr e) (Array.to_list captures) in
@@ -158,21 +152,12 @@ let step directives values envs = match directives, values, envs with
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
      Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs
 
-  (* Self-documenting *)
-  | Add :: rest, Int b :: Int a :: values', _ ->
-     rest, Int (a + b) :: values', envs
-  | Sub :: rest, Int b :: Int a :: values', _ ->
-     rest, Int (a - b) :: values', envs
-  | Equal :: rest, Int b :: Int a :: values', _ ->
-     rest, Bool (a = b) :: values', envs
-  | Equal :: rest, Bool b :: Bool a :: values', _ ->
-     rest, Bool (a = b) :: values', envs
-  | And :: rest, Bool b :: Bool a :: values', _ ->
-     rest, Bool (a && b) :: values', envs
-  | Or :: rest, Bool b :: Bool a :: values', _ ->
-     rest, Bool (a || b) :: values', envs
-  | Invert :: rest, Bool b :: values', _ ->
-     rest, Bool (not b) :: values', envs
+  (* Compute binary op then continue *)
+  | BinOp op :: rest, rhs :: lhs :: values', _ ->
+     rest, do_bin_op op lhs rhs :: values', envs
+  (* Compute unary op then continue *)
+  | UnaryOp op :: rest, v :: values', _ ->
+     rest, do_unary_op op v :: values', envs
 
   (* Pop top value *)
   | Pop :: rest, _ :: values', _ ->

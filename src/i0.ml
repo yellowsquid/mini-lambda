@@ -1,6 +1,7 @@
 (* OCaml interpretter for language *)
 
 open Typed_ast
+open Ops
 
 exception Error of Typed_ast.loc * string
 
@@ -27,10 +28,29 @@ let value_to_string value = match value with
 
 let step = ref 0
 
-let type_mismatch op lhs rhs =
+let bin_type_mismatch op lhs rhs =
   let val_lhs = value_to_string lhs in
   let val_rhs = value_to_string rhs in
-  Printf.sprintf "type mismatch for %s: got %s and %s" op val_lhs val_rhs
+  let val_op = string_of_bin_op op in
+  Printf.sprintf "type mismatch for %s: got %s and %s" val_op val_lhs val_rhs
+
+let unary_type_mismatch op e =
+  let val_e = value_to_string e in
+  let val_op = string_of_unary_op op in
+  Printf.sprintf "type mismatch for %s: got %s" val_op val_e
+
+let do_bin_op pos op lhs rhs = match op, lhs, rhs with
+  | Add, Int a, Int b -> Int (a + b)
+  | Sub, Int a, Int b -> Int (a - b)
+  | Equal, Int a, Int b -> Bool (a = b)
+  | Equal, Bool a, Bool b -> Bool (a = b)
+  | And, Bool a, Bool b -> Bool (a && b)
+  | Or, Bool a, Bool b -> Bool (a || b)
+  | _, _, _ -> raise (Error (pos, bin_type_mismatch op lhs rhs))
+
+let do_unary_op pos op e = match op, e with
+  | Invert, Bool b -> Bool (not b)
+  | _, _ -> raise (Error (pos, unary_type_mismatch op e))
 
 (* Proof: Observation *)
 let rec interpret_expr env expr =
@@ -41,55 +61,13 @@ let rec interpret_expr env expr =
     | ArgExpr(_, id) -> Array.get env.args id
     | IntExpr(_, i) -> Int(i)
     | BoolExpr(_, b) -> Bool(b)
-    | AddExpr(pos, lhs, rhs) ->
-       (let lhs' = interpret_expr env lhs in
-        let rhs' = interpret_expr env rhs in
-        match lhs', rhs' with
-        | Int(a), Int(b) -> Int(a + b)
-        | _ ->
-           let msg = type_mismatch "add" lhs' rhs' in
-           raise(Error(pos, msg)))
-    | SubExpr(pos, lhs, rhs) ->
-       (let lhs' = interpret_expr env lhs in
-        let rhs' = interpret_expr env rhs in
-        match lhs', rhs' with
-        | Int(a), Int(b) -> Int(a - b)
-        | _ ->
-           let msg = type_mismatch "sub" lhs' rhs' in
-           raise(Error(pos, msg)))
-    | EqualExpr(pos, lhs, rhs) ->
-       (let lhs' = interpret_expr env lhs in
-        let rhs' = interpret_expr env rhs in
-        match lhs', rhs' with
-        | Int(a), Int(b) -> Bool(a = b)
-        | Bool(a), Bool(b) -> Bool(a = b)
-        | _ ->
-           let msg = type_mismatch "equal" lhs' rhs' in
-           raise(Error(pos, msg)))
-    | AndExpr(pos, lhs, rhs) ->
-       (let lhs' = interpret_expr env lhs in
-        let rhs' = interpret_expr env rhs in
-        match lhs', rhs' with
-        | Bool(a), Bool(b) -> Bool(a && b)
-        | _ ->
-           let msg = type_mismatch "and" lhs' rhs' in
-           raise(Error(pos, msg)))
-    | OrExpr(pos, lhs, rhs) ->
-       (let lhs' = interpret_expr env lhs in
-        let rhs' = interpret_expr env rhs in
-        match lhs', rhs' with
-        | Bool(a), Bool(b) -> Bool(a || b)
-        | _ ->
-           let msg = type_mismatch "or" lhs' rhs' in
-           raise(Error(pos, msg)))
-    | InvertExpr(pos, e) ->
-       (let e' = interpret_expr env e in
-        match e' with
-        | Bool(b) -> Bool(not b)
-        | _ ->
-           let ty_e = value_to_string e' in
-           let msg = Printf.sprintf "type mismatch for invert: got %s" ty_e in
-           raise(Error(pos, msg)))
+    | BinExpr(pos, op, lhs, rhs) ->
+       let lhs' = interpret_expr env lhs in
+       let rhs' = interpret_expr env rhs in
+       do_bin_op pos op lhs' rhs'
+    | UnaryExpr(pos, op, e) ->
+       let e' = interpret_expr env e in
+       do_unary_op pos op e'
     | LambdaExpr(_, params, captures, body) -> Lambda (eval_lambda env params captures body)
     | CallExpr(pos, callee, args) ->
        let callee' = interpret_expr env callee in

@@ -12,12 +12,8 @@ type expr
   = IdentExpr of loc * string
   | IntExpr of loc * int
   | BoolExpr of loc * bool
-  | AddExpr of loc * expr * expr
-  | SubExpr of loc * expr * expr
-  | EqualExpr of loc * expr * expr
-  | AndExpr of loc * expr * expr
-  | OrExpr of loc * expr * expr
-  | InvertExpr of loc * expr
+  | BinExpr of loc * Ops.bin_op * expr * expr
+  | UnaryExpr of loc * Ops.unary_op * expr
   | LambdaExpr of loc * string list * expr
   | CallExpr of loc * expr * expr list
 

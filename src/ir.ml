@@ -35,18 +35,10 @@ type inst
   | Label of int * int
   (* Jump to a label. *)
   | Jump of int * int
-  (* Pops two values and pushes their sum. *)
-  | Add
-  (* Pops two values and pushes their difference. *)
-  | Sub
-  (* Pops two values and pushes 0 if either is 0, else 1. *)
-  | And
-  (* Pops two values and pushes 0 if both are 0, else 1. *)
-  | Or
-  (* Pops two values and pushes 1 if both are equal, else 0. *)
-  | Equal
-  (* Pops one value and pushes 1 if it were 0, else 0. *)
-  | Not
+  (* Pops two values and pushes the result of op. *)
+  | BinOp of Ops.bin_op
+  (* Pops one value and pushes the result of op. *)
+  | UnaryOp of Ops.unary_op
   (* Pops a closure and invokes it. *)
   | Call
   (* Pops a return value and returns. *)
@@ -78,12 +70,8 @@ let print_inst out inst =
   | If(i, j)      -> Printf.fprintf out "\tIf(%d, %d)\n" i j
   | Label(i, j)   -> Printf.fprintf out "\tLabel(%d, %d)\n" i j
   | Jump(i, j)    -> Printf.fprintf out "\tJump(%d, %d)\n" i j
-  | Add           -> Printf.fprintf out "\tAdd\n"
-  | Sub           -> Printf.fprintf out "\tSub\n"
-  | And           -> Printf.fprintf out "\tAnd\n"
-  | Or            -> Printf.fprintf out "\tOr\n"
-  | Equal         -> Printf.fprintf out "\tEqual\n"
-  | Not           -> Printf.fprintf out "\tNot\n"
+  | BinOp op      -> Printf.fprintf out "\tBinOp(%s)\n" (Ops.string_of_bin_op op)
+  | UnaryOp op    -> Printf.fprintf out "\tUnaryOp(%s)\n" (Ops.string_of_unary_op op)
   | Call          -> Printf.fprintf out "\tInvoke\n"
   | Return        -> Printf.fprintf out "\tReturn\n"
   | Pop           -> Printf.fprintf out "\tPop\n"

@@ -6,6 +6,7 @@
  *)
 
 open Ir
+open Ops
 
 let compile_closure out debug { id; num_params; num_locals; name; insts; _ } =
   Printf.fprintf out "\t.text\n";
@@ -70,26 +71,26 @@ let compile_closure out debug { id; num_params; num_locals; name; insts; _ } =
          Printf.fprintf out "__label_%d_%d:\n" i j
       | Jump(i, j) ->
          Printf.fprintf out "\tjmp __label_%d_%d\n" i j
-      | Add ->
+      | BinOp Add ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\taddq %%rcx, (%%rsp)\n"
-      | Sub ->
+      | BinOp Sub ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\tsubq %%rcx, (%%rsp)\n"
-      | And ->
+      | BinOp And ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\tandq %%rcx, (%%rsp)\n"
-      | Or ->
+      | BinOp Or ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\torq %%rcx, (%%rsp)\n"
-      | Equal ->
+      | BinOp Equal ->
          Printf.fprintf out "\tpopq %%rcx\n";
          Printf.fprintf out "\tpopq %%rdx\n";
          Printf.fprintf out "\tcmpq %%rcx, %%rdx\n";
          Printf.fprintf out "\tpushfq\n";
          Printf.fprintf out "\tshrq $6, (%%rsp)\n";
          Printf.fprintf out "\tandq $1, (%%rsp)\n"
-      | Not ->
+      | UnaryOp Invert ->
          Printf.fprintf out "\txorq $1, (%%rsp)\n"
       | Call ->
          Printf.fprintf out "\tpopq %%rax\n";
