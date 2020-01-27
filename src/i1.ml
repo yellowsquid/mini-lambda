@@ -3,7 +3,8 @@
 open Typed_ast
 
 type value
-  = Unit
+  = None
+  | Unit
   | Bool of bool
   | Int of int
   | Lambda of (env -> value list -> value)
@@ -15,37 +16,47 @@ and env =
   }
 
 let rec interpret_exprs_cnt env exprs cnt = match exprs with
+  (* No expressions so start applying *)
   | [] -> cnt []
+  (* Push the func to stack top before applying *)
   | FuncExpr(_, id) :: rest ->
      let value = Array.get env.funcs id in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push the local to stack top before applying *)
   | EnvExpr(_, id) :: rest ->
      let value = Array.get env.captures id in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push the local to stack top before applying *)
   | BoundExpr(_, id) :: rest ->
      let value = !(Array.get env.binds id) in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push the arg to stack top before applying *)
   | ArgExpr(_, id) :: rest ->
      let value = Array.get env.args id in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push the int to stack top before applying *)
   | IntExpr(_, i) :: rest ->
      let value = Int i in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push the bool to stack top before applying *)
   | BoolExpr(_, b) :: rest ->
      let value = Bool b in
      interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))
+  (* Push first then second arg then add before applying *)
   | AddExpr(_, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
            | [Int a; Int b] -> Int (a + b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push first then second arg then sub before applying *)
   | SubExpr(_, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
            | [Int a; Int b] -> Int (a - b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push first then second arg then equal before applying *)
   | EqualExpr(_, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
@@ -53,24 +64,28 @@ let rec interpret_exprs_cnt env exprs cnt = match exprs with
            | [Bool a; Bool b] -> Bool (a = b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push first then second arg then and before applying *)
   | AndExpr(_, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
            | [Bool a; Bool b] -> Bool (a && b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push first then second arg then or before applying *)
   | OrExpr(_, lhs, rhs) :: rest ->
      interpret_exprs_cnt env [lhs; rhs] (fun x ->
          let value = match x with
            | [Bool a; Bool b] -> Bool (a || b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push first then second arg then invert before applying *)
   | InvertExpr(_, e) :: rest ->
      interpret_exprs_cnt env [e] (fun x ->
          let value = match x with
            | [Bool b] -> Bool (not b)
            | _ -> failwith "type mismatch"
          in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Capture args then construct function before applying *)
   | LambdaExpr(_, params, captures, body) :: rest ->
      interpret_exprs_cnt env (Array.to_list captures) (fun captures' ->
          let eval env' args =
@@ -86,6 +101,7 @@ let rec interpret_exprs_cnt env exprs cnt = match exprs with
          in
          let value = Lambda eval in
          interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest')))
+  (* Push function then args before calling and then applying *)
   | CallExpr(_, callee, args) :: rest ->
      interpret_exprs_cnt env [callee] (fun x ->
          interpret_exprs_cnt env (Array.to_list args) (fun args' ->
@@ -94,28 +110,28 @@ let rec interpret_exprs_cnt env exprs cnt = match exprs with
                | _ -> failwith "type mismatch"
              in interpret_exprs_cnt env rest (fun rest' -> cnt (value :: rest'))))
 
-let rec get_value values = match values with
-  | [] -> Unit
-  | Unit :: rest -> get_value rest
-  | x :: _ -> x
-
 let rec interpret_stmts_cnt env stmts cnt = match stmts with
-  | [] -> cnt []
-  | ReturnStmt(_, e) :: rest ->
+  (* No statements so apply None *)
+  | [] -> cnt None
+  (* Calculate return value then apply *)
+  | ReturnStmt(_, e) :: _ ->
      interpret_exprs_cnt env [e] (fun x ->
          let value = match x with
            | [e'] -> e'
            | _ -> failwith "type mismatch"
-         in interpret_stmts_cnt env rest (fun rest' -> cnt (value :: rest')))
+         in cnt value)
+  (* Eval expression then continue on *)
   | ExprStmt(_, e) :: rest ->
      interpret_exprs_cnt env [e] (fun _ ->
-         interpret_stmts_cnt env rest (fun rest' -> cnt (Unit :: rest')))
+         interpret_stmts_cnt env rest cnt)
+  (* Bind expression then continue on *)
   | BindStmt(_, id, e) :: rest ->
      interpret_exprs_cnt env [e] (fun x ->
          (match x with
           | [e'] -> (Array.get env.binds id):= e'
           | _ -> failwith "type mismatch");
-         interpret_stmts_cnt env rest (fun rest' -> cnt (Unit :: rest')))
+         interpret_stmts_cnt env rest cnt)
+  (* Evaluate condition then block. If block return then return, else continue on *)
   | IfStmt(_, cond, then_block, else_block) :: rest ->
      interpret_exprs_cnt env [cond] (fun x ->
          let block = match x with
@@ -124,8 +140,9 @@ let rec interpret_stmts_cnt env stmts cnt = match stmts with
            | _ -> failwith "type mismatch"
          in
          interpret_stmts_cnt env block (fun block' ->
-             let value = get_value block' in
-             interpret_stmts_cnt env rest (fun rest' -> cnt (value :: rest'))))
+             match block' with
+             | None -> interpret_stmts_cnt env rest cnt
+             | x -> x))
 
 module FuncMap = Map.Make(String)
 
@@ -145,6 +162,7 @@ let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Lambda(print_int)
                                            ; "print_bool", Lambda(print_bool)
                                            ; "input_int", Lambda(input_int)])
 
+let identity x = x
 
 let interpret_func func =
   if Option.is_none func.body then
@@ -163,7 +181,7 @@ let interpret_func func =
                    ; args = Array.of_list args
                    }
         in
-         interpret_stmts_cnt env' (Option.get func.body) get_value
+         interpret_stmts_cnt env' (Option.get func.body) identity
     in Lambda eval
 
 let interpret _debug program =
@@ -180,4 +198,8 @@ let interpret _debug program =
   let func_expr = Typed_ast.FuncExpr(Lexing.dummy_pos, main.id) in
   let args = Array.of_list [] in
   let call_expr = Typed_ast.CallExpr(Lexing.dummy_pos, func_expr, args) in
-  ignore (interpret_exprs_cnt env [call_expr] get_value)
+  interpret_exprs_cnt env [call_expr] (fun x ->
+      match x with
+      | [None] -> None
+      | _ -> failwith "type mismatch")
+|> ignore

@@ -98,47 +98,67 @@ let rec take_rev n acc stack = match n, stack with
 let make_block stmts = List.flatten (List.map (fun s -> [Stmt s; Seq]) stmts) @ [PushNone]
 
 let step directives values envs = match directives, values, envs with
+  (* Nothing to do so we're done *)
   | [], values, envs -> [], values, envs
+  (* Push function to top *)
   | Expr (FuncExpr (_, id)) :: rest, _, _ ->
      rest, Array.get !funcs id :: values, envs
+  (* Push local to top *)
   | Expr (EnvExpr (_, id)) :: rest, _, env :: _ ->
      rest, !(Array.get env.stack id) :: values, envs
+  (* Push local to top *)
   | Expr (BoundExpr (_, id)) :: rest, _, env :: _->
      rest, !(Array.get env.stack id) :: values, envs
+  (* Push arg to top *)
   | Expr (ArgExpr (_, id)) :: rest, _, env :: _ ->
      rest, !(Array.get env.stack (id + env.locals)) :: values, envs
+  (* Push int to top *)
   | Expr (IntExpr (_, i)) :: rest, _, _ ->
      rest, Int i :: values, envs
+  (* Push bool to top *)
   | Expr (BoolExpr (_, b)) :: rest, _, _ ->
      rest, Bool b :: values, envs
+  (* Push first arg then second arg then add *)
   | Expr (AddExpr (_, lhs, rhs)) :: rest, _, _ ->
      Expr lhs :: Expr rhs :: Add :: rest, values, envs
+  (* Push first arg then second arg then sub *)
   | Expr (SubExpr (_, lhs, rhs)) :: rest, _, _ ->
      Expr lhs :: Expr rhs :: Sub :: rest, values, envs
+  (* Push first arg then second arg then equal *)
   | Expr (EqualExpr (_, lhs, rhs)) :: rest, _, _ ->
      Expr lhs :: Expr rhs :: Equal :: rest, values, envs
+  (* Push first arg then second arg then and *)
   | Expr (AndExpr (_, lhs, rhs)) :: rest, _, _ ->
      Expr lhs :: Expr rhs :: And :: rest, values, envs
+  (* Push first arg then second arg then or *)
   | Expr (OrExpr (_, lhs, rhs)) :: rest, _, _ ->
      Expr lhs :: Expr rhs :: Or :: rest, values, envs
+  (* Push arg then invert *)
   | Expr (InvertExpr (_, e)) :: rest, _, _ ->
      Expr e :: Invert :: rest, values, envs
+  (* Evaluate args then capture as lambda *)
   | Expr (LambdaExpr (_, params, captures, body)) :: rest, _, _ ->
      let capturing = List.map (fun e -> Expr e) (Array.to_list captures) in
      capturing @ (Capture (params, Array.length captures, [Expr body]) :: rest), values, envs
+  (* Evaluate callee then args then call *)
   | Expr (CallExpr (_, callee, args)) :: rest, _, _ ->
      let evaled_args = List.map (fun e -> Expr e) (Array.to_list args) in
      Expr callee :: evaled_args @ (Call (Array.length args) :: PopEnv :: rest), values, envs
 
+  (* Calculate value and then continue *)
   | Stmt (ReturnStmt (_, e)) :: rest, _, _ ->
      Expr e :: rest, values, envs
+  (* Eval expression pop then continue *)
   | Stmt (ExprStmt (_, e)) :: rest, _, _ ->
      Expr e :: Pop :: PushNone :: rest, values, envs
+  (* Eval expression bind then continue *)
   | Stmt (BindStmt (_, id, e)) :: rest, _, _ ->
      Expr e :: Bind id :: rest, values, envs
+  (* Eval condition then continue *)
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
      Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs
 
+  (* Self-documenting *)
   | Add :: rest, Int b :: Int a :: values', _ ->
      rest, Int (a + b) :: values', envs
   | Sub :: rest, Int b :: Int a :: values', _ ->
@@ -154,23 +174,31 @@ let step directives values envs = match directives, values, envs with
   | Invert :: rest, Bool b :: values', _ ->
      rest, Bool (not b) :: values', envs
 
+  (* Pop top value *)
   | Pop :: rest, _ :: values', _ ->
      rest, values', envs
+  (* Pop top environment *)
   | PopEnv :: rest, _, _ :: envs' ->
      rest, values, envs'
+  (* Push none to stack *)
   | PushNone :: rest, _, _ ->
      rest, None :: values, envs
+  (* Statement didn't return so eval next one *)
   | Seq :: rest, None :: values', _ ->
      rest, values', envs
+  (* Statement returned so skip next one *)
   | Seq :: _ :: rest, _, _ ->
      rest, values, envs
 
+  (* Create lambda from args *)
   | Capture (params, captures, body) :: rest, _, _ ->
      let captures', values' = take_rev captures [] values in
      rest, Func (params, captures', body) :: values', envs
+  (* Evaluate built-in function *)
   | Builtin f :: rest, _, env :: _ ->
      rest, f env :: values, envs
 
+  (* Call function with args *)
   | Call args :: rest, _, _ ->
      let args', values' = take_rev args [] values in
      (match values' with
@@ -182,14 +210,19 @@ let step directives values envs = match directives, values, envs with
       | _ -> failwith "type mismatch"
      )
 
+  (* Bind value and push None *)
   | Bind id :: rest, v :: values', env :: _ ->
      (Array.get env.stack id) := v;
      rest, None :: values', envs
+  (* If true then evaluate true block *)
   | If (tblock, _) :: rest, Bool true :: values', _ ->
      tblock @ rest, values', envs
+  (* If false then evaluate false block *)
   | If (_, fblock) :: rest, Bool false :: values', _ ->
      fblock @ rest, values', envs
-  | _, _, _ -> failwith "type mismatch"
+
+  (* Reaching here is a bug *)
+  | _, _, _ -> failwith "runtime error"
 
 let stage = ref 0
 

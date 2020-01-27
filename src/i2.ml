@@ -3,8 +3,8 @@
 open Typed_ast
 
 type value
-  = Unit
-  | None
+  = None
+  | Unit
   | Bool of bool
   | Int of int
   | Func of int * int * statement list
@@ -44,53 +44,92 @@ type step
   | Apply of cnt list * value
 
 let step config = match config with
+  (* Push function to top before applying *)
   | Expr (cnts, env, FuncExpr (_, id)) -> Apply (cnts, Array.get env.funcs id)
+  (* Push local to top before applying *)
   | Expr (cnts, env, EnvExpr (_, id)) -> Apply (cnts, Array.get env.captures id)
+  (* Push local to top before applying *)
   | Expr (cnts, env, BoundExpr (_, id)) -> Apply (cnts, !(Array.get env.binds id))
+  (* Push arg to top before applying *)
   | Expr (cnts, env, ArgExpr (_, id)) -> Apply (cnts, Array.get env.args id)
+  (* Push int to top before applying *)
   | Expr (cnts, _, IntExpr (_, i)) -> Apply (cnts, Int i)
+  (* Push bool to top before applying *)
   | Expr (cnts, _, BoolExpr (_, b)) -> Apply (cnts, Bool b)
+  (* Eval the first arg before continuing *)
   | Expr (cnts, env, AddExpr (_, lhs, rhs)) -> Expr (AddOuterCnt (env, rhs) :: cnts, env, lhs)
+  (* Eval the first arg before continuing *)
   | Expr (cnts, env, SubExpr (_, lhs, rhs)) -> Expr (SubOuterCnt (env, rhs) :: cnts, env, lhs)
+  (* Eval the first arg before continuing *)
   | Expr (cnts, env, EqualExpr (_, lhs, rhs)) -> Expr (EqualOuterCnt (env, rhs) :: cnts, env, lhs)
+  (* Eval the first arg before continuing *)
   | Expr (cnts, env, AndExpr (_, lhs, rhs)) -> Expr (AndOuterCnt (env, rhs) :: cnts, env, lhs)
+  (* Eval the first arg before continuing *)
   | Expr (cnts, env, OrExpr (_, lhs, rhs)) -> Expr (OrOuterCnt (env, rhs) :: cnts, env, lhs)
+  (* Eval the arg before continuing *)
   | Expr (cnts, env, InvertExpr (_, e)) -> Expr (InvertCnt :: cnts, env, e)
 
+  (* Prepare to capture args *)
   | Expr (cnts, env, LambdaExpr (_, params, captures, body)) ->
      Apply (LambdaCnt (env, Array.to_list captures, [], params, body) :: cnts, None)
+  (* Evaluate callee before continuing *)
   | Expr (cnts, env, CallExpr (_, callee, args)) ->
      Expr (CallCnt (env, Array.to_list args) :: cnts, env, callee)
 
+  (* Calculate value then apply *)
   | Stmt (cnts, env, ReturnStmt (_, e)) -> Expr (cnts, env, e)
+  (* Eval expression pop then continue *)
   | Stmt (cnts, env, ExprStmt (_, e)) -> Expr (IgnoreCnt :: cnts, env, e)
+  (* Eval bind value then continue *)
   | Stmt (cnts, env, BindStmt (_, id, e)) -> Expr (BindCnt (env, id) :: cnts, env, e)
+  (* Eval condition then continue *)
   | Stmt (cnts, env, IfStmt (_, cond, tblock, fblock)) ->
      Expr (IfCnt (env, tblock, fblock) :: cnts, env, cond)
 
+  (* Noting to do so done *)
   | Apply ([], value) -> Apply ([], value)
+  (* Eval the second arg before continuing *)
   | Apply (AddOuterCnt (env, rhs) :: rest, Int a) -> Expr (AddCnt a :: rest, env, rhs)
+  (* Add and apply *)
   | Apply (AddCnt a :: rest, Int b) -> Apply (rest, Int (a + b))
+  (* Eval the second arg before continuing *)
   | Apply (SubOuterCnt (env, rhs) :: rest, Int a) -> Expr (SubCnt a :: rest, env, rhs)
+  (* Sub and apply *)
   | Apply (SubCnt a :: rest, Int b) -> Apply (rest, Int (a - b))
+  (* Eval the second arg before continuing *)
   | Apply (EqualOuterCnt (env, rhs) :: rest, Int a) -> Expr (EqualIntCnt a :: rest, env, rhs)
+  (* Eval the second arg before continuing *)
   | Apply (EqualOuterCnt (env, rhs) :: rest, Bool a) -> Expr (EqualBoolCnt a :: rest, env, rhs)
+  (* Equal and apply *)
   | Apply (EqualIntCnt a :: rest, Int b) -> Apply (rest, Bool (a = b))
+  (* Equal and apply *)
   | Apply (EqualBoolCnt a :: rest, Bool b) -> Apply (rest, Bool (a = b))
+  (* Eval the second arg before continuing *)
   | Apply (AndOuterCnt (env, rhs) :: rest, Bool a) -> Expr (AndCnt a :: rest, env, rhs)
+  (* And and apply *)
   | Apply (AndCnt a :: rest, Bool b) -> Apply (rest, Bool (a && b))
+  (* Eval the second arg before continuing *)
   | Apply (OrOuterCnt (env, rhs) :: rest, Bool a) -> Expr (OrCnt a :: rest, env, rhs)
+  (* And and apply *)
   | Apply (OrCnt a :: rest, Bool b) -> Apply (rest, Bool (a || b))
+  (* Invert and apply *)
   | Apply (InvertCnt :: rest, Bool a) -> Apply (rest, Bool (not a))
 
+  (* All args captured so push and apply *)
   | Apply (LambdaCnt (_, [], captured, p, body) :: rest, None) ->
      Apply (rest, Lambda (p, Array.of_list (List.rev captured), body))
+  (* Evaluate the next arg *)
   | Apply (LambdaCnt (env, e :: exprs, captured, p, body) :: rest, None) ->
      Expr (LambdaCnt (env, exprs, captured, p, body) :: rest, env, e)
+  (* Move arg from stack to lambda *)
   | Apply (LambdaCnt (env, to_capture, captured, p, body) :: rest, v) ->
      Apply (LambdaCnt (env, to_capture, v :: captured, p, body) :: rest, None)
+
+  (* Prepare to evaluate args *)
   | Apply (CallCnt (env, args) :: rest, v) ->
      Apply (ArgsCnt (env, args, [], v) :: rest, None)
+
+  (* All args evaluated so evaluate lambda body *)
   | Apply (ArgsCnt (env, [], parsed, Lambda (params, captures, body)) :: rest, None)
        when params = List.length parsed ->
      let env' = { funcs = env.funcs
@@ -99,6 +138,7 @@ let step config = match config with
                 ; args = Array.of_list (List.rev parsed)
                 }
      in Expr (rest, env', body)
+  (* All args evaluated so evaluate function body *)
   | Apply (ArgsCnt (env, [], parsed, Func (binds, params, body)) :: rest, None)
        when params = List.length parsed ->
      let env' = { funcs = env.funcs
@@ -107,21 +147,34 @@ let step config = match config with
                 ; args = Array.of_list (List.rev parsed)
                 }
      in Apply (SeqCnt (env', body) :: rest, None)
+  (* All args evaluated so evaluate builtin *)
   | Apply (ArgsCnt (_, [], parsed, Builtin f) :: rest, None) ->
      Apply (rest, f (List.rev parsed))
+
+  (* Evaluate the next arg *)
   | Apply (ArgsCnt (env, e :: exprs, parsed, callee) :: rest, None) ->
      Expr (ArgsCnt (env, exprs, parsed, callee) :: rest, env, e)
+  (* Move arg from stack to call *)
   | Apply (ArgsCnt (env, exprs, parsed, callee) :: rest, v) ->
      Apply (ArgsCnt (env, exprs, v :: parsed, callee) :: rest, None)
 
+  (* Ignore value and apply to None *)
   | Apply (IgnoreCnt :: rest, _) -> Apply (rest, None)
+  (* Bind value and apply to None *)
   | Apply (BindCnt (env, id) :: rest, x) -> Array.get env.binds id := x; Apply (rest, None)
+  (* If condition was true then evaluate tblock *)
   | Apply (IfCnt (env, tblock, _) :: rest, Bool true) -> Apply (SeqCnt (env, tblock) :: rest, None)
+  (* If condition was false then evaluate fblock *)
   | Apply (IfCnt (env, _, fblock) :: rest, Bool false) -> Apply (SeqCnt (env, fblock) :: rest, None)
+  (* No more statements so apply to None *)
   | Apply (SeqCnt (_, []) :: rest, None) -> Apply (rest, None)
+  (* Returned none so eval next statement *)
   | Apply (SeqCnt (env, s :: stmts) :: rest, None) -> Stmt (SeqCnt (env, stmts) :: rest, env, s)
+  (* Returned something so pass it up *)
   | Apply (SeqCnt (_, _) :: rest, x) -> Apply (rest, x)
-  | _ -> failwith "type mismatch"
+
+  (* Reaching here is a bug *)
+  | _ -> failwith "runtime error"
 
 let driver env stmts =
   let rec iter config = match config with

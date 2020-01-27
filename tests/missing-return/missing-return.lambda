@@ -1,0 +1,9 @@
+func missing(x) {
+    if x == 2 {
+        return 3;
+    }
+}
+
+func main() {
+    missing(1);
+}

@@ -5,7 +5,8 @@ open Typed_ast
 exception Error of Typed_ast.loc * string
 
 type value
-  = Unit
+  = None
+  | Unit
   | Bool of bool
   | Int of int
   | Lambda of (env * value array -> value)
@@ -18,6 +19,7 @@ and env =
   }
 
 let value_to_string value = match value with
+  | None -> "!"
   | Unit -> "()"
   | Bool(b) -> string_of_bool b
   | Int(i) -> string_of_int i
@@ -30,6 +32,7 @@ let type_mismatch op lhs rhs =
   let val_rhs = value_to_string rhs in
   Printf.sprintf "type mismatch for %s: got %s and %s" op val_lhs val_rhs
 
+(* Proof: Observation *)
 let rec interpret_expr env expr =
   let result = match expr with
     | FuncExpr(_, id) -> Array.get env.funcs id
@@ -135,21 +138,26 @@ let rec interpret_stmt env stmt =
 
   match stmt with
   | ReturnStmt(_, e) -> interpret_expr env e
-  | ExprStmt(_, e) -> ignore (interpret_expr env e); Unit
+  | ExprStmt(_, e) -> ignore (interpret_expr env e); None
   | BindStmt(_, id, e) ->
      let e' = interpret_expr env e in
      (Array.get env.binds id) := e';
      (if env.debug then
         Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e')
      );
-     Unit
+     None
   | IfStmt(pos, cond, then_block, else_block) ->
      match interpret_expr env cond with
      | Bool(true) -> apply_block env then_block
      | Bool(false) -> apply_block env else_block
      | _ -> raise(Error(pos, "condition with not a bool"))
 and apply_block env stmts =
-  List.fold_left (fun _ stmt -> interpret_stmt env stmt) Unit stmts
+  match stmts with
+  | [] -> None
+  | stmt :: rest ->
+     (match interpret_stmt env stmt with
+      | None -> apply_block env rest
+      | x -> x)
 
 module FuncMap = Map.Make(String)
 

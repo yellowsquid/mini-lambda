@@ -1,0 +1,17 @@
+func input_int();
+func print_int(x);
+
+func other(x) {
+    if x == 2 {
+        return x;
+        print_int(0);
+    }
+
+    print_int(x);
+    return x;
+    print_int(3);
+}
+
+func main() {
+    print_int(other(input_int()));
+}

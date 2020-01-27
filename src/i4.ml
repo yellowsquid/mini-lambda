@@ -14,6 +14,7 @@ type directive
   | Pop
   | PopEnv
   | Seq
+  | BlockEnd
   (* Params * Locals * Body *)
   | Capture of int * int * directive list
   | Builtin of string
@@ -53,6 +54,7 @@ let rec pp_directive ppf directive = match directive with
   | Pop -> Format.fprintf ppf "Pop"
   | PopEnv -> Format.fprintf ppf "PopEnv"
   | Seq -> Format.fprintf ppf "Seq"
+  | BlockEnd -> Format.fprintf ppf "BlockEnd"
   | Capture (params, captures, body) ->
      Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
      pp_directive_list ppf body;
@@ -111,32 +113,51 @@ let builtins = FuncMap.of_seq (List.to_seq [ "print_int", (print_int, 1)
 let funcs = ref (Array.of_list [])
 
 let rec flatten_expr acc expr = match expr with
+  (* Push function to top *)
   | FuncExpr (_, id) -> PushFunc id :: acc
+  (* Push local to top *)
   | EnvExpr (_, id) -> PushLocal id :: acc
+  (* Push local to top *)
   | BoundExpr (_, id) -> PushLocal id :: acc
+  (* Push arg to top *)
   | ArgExpr (_, id) -> PushArg id :: acc
+  (* Push int to top*)
   | IntExpr (_, i) -> Push (Int i) :: acc
+  (* Push bool to top *)
   | BoolExpr (_, b) -> Push (Bool b) :: acc
+  (* Push first arg then second then add *)
   | AddExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Add :: acc) rhs) lhs
+  (* Push first arg then second then sub *)
   | SubExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Sub :: acc) rhs) lhs
+  (* Push first arg then second then equal *)
   | EqualExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Equal :: acc) rhs) lhs
+  (* Push first arg then second then and *)
   | AndExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (And :: acc) rhs) lhs
+  (* Push first arg then second then or *)
   | OrExpr (_, lhs, rhs) -> flatten_expr (flatten_expr (Or :: acc) rhs) lhs
+  (* Push arg then invert *)
   | InvertExpr (_, e) -> flatten_expr (Invert :: acc) e
+  (* Evaluate args then capture as lambda *)
   | LambdaExpr (_, params, captures, body) ->
      let acc' = Capture (params, Array.length captures, flatten_expr [] body) :: acc in
      List.fold_left flatten_expr acc' (List.rev (Array.to_list captures))
+  (* Evaluate callee then args then call *)
   | CallExpr (_, callee, args) ->
      let acc' = Call (Array.length args) :: PopEnv :: acc in
      flatten_expr (List.fold_left flatten_expr acc' (List.rev (Array.to_list args))) callee
 
 let rec flatten_stmt acc stmt = match stmt with
+  (* Calculate value then continue *)
   | ReturnStmt (_, e) -> flatten_expr acc e
+  (* Evaluate expression pop then continue *)
   | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
+  (* Evaluate expression bind then conntinue *)
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
+  (* Evaluate condiition branch then continue *)
   | IfStmt (_, cond, tblock, fblock) ->
-     flatten_expr (If (make_block tblock, make_block fblock) :: acc) cond
-and make_block stmts = List.flatten (List.map (flatten_stmt [Seq]) stmts) @ [Push None]
+     flatten_expr (If (make_if_block tblock, make_if_block fblock) :: acc) cond
+and sequence acc stmt = flatten_stmt (Seq :: acc) stmt
+and make_if_block stmts = List.fold_left sequence [Push None] (List.rev stmts)
 
 let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
@@ -144,7 +165,10 @@ let rec take_rev n acc stack = match n, stack with
   | _, _ -> failwith "stack too short"
 
 let step directives values envs = match directives, values, envs with
+  (* Nothing to do so we're done *)
   | [], values, envs -> [], values, envs
+
+  (* Self-documenting *)
   | Add :: rest, Int b :: Int a :: values', _ -> rest, Int (a + b) :: values', envs
   | Sub :: rest, Int b :: Int a :: values', _ -> rest, Int (a - b) :: values', envs
   | Equal :: rest, Int b :: Int a :: values', _ -> rest, Bool (a = b) :: values', envs
@@ -153,22 +177,42 @@ let step directives values envs = match directives, values, envs with
   | Or :: rest, Bool b :: Bool a :: values', _ -> rest, Bool (a || b) :: values', envs
   | Invert :: rest, Bool b :: values', _ -> rest, Bool (not b) :: values', envs
 
+  (* Push a function *)
   | PushFunc id :: rest, _, _ -> rest, Array.get !funcs id :: values, envs
+  (* Push a local *)
   | PushLocal id :: rest, _, env :: _ -> rest, !(Array.get env.stack id) :: values, envs
+  (* Push an arg *)
   | PushArg id :: rest, _, env :: _ ->
      rest, !(Array.get env.stack (id + env.locals)) :: values, envs
+  (* Push a constant *)
   | Push v :: rest, _, _ -> rest, v :: values, envs
+  (* Pop a value *)
   | Pop :: rest, _ :: values', _ -> rest, values', envs
+  (* Pop an environment *)
   | PopEnv :: rest, _, _ :: envs' -> rest, values, envs'
-  | Seq :: rest, None :: values', _ -> rest, values', envs
-  | Seq :: _ :: rest, _, _ -> rest, values, envs
 
+  (* Evaluate next statement if no return *)
+  | Seq :: rest, None :: values', _ -> rest, values', envs
+  (* Skip until reached EndBlock *)
+  | Seq :: rest, _, _ ->
+     let rec iter stack = match stack with
+       | BlockEnd :: rest -> rest
+       | _ :: rest -> iter rest
+       | _ -> failwith "Seq without BlockEnd" in
+     iter rest, values, envs
+  (* No-op (function didn't return) *)
+  | BlockEnd :: rest, _, _ ->
+     rest, values, envs
+
+  (* Build function from captures on stack *)
   | Capture (params, captures, body) :: rest, _, _ ->
      let captures', values' = take_rev captures [] values in
      rest, Func (params, captures', body) :: values', envs
+  (* Eval builtin function *)
   | Builtin name :: rest, _, env :: _ ->
      rest, (fst (FuncMap.find name builtins)) env :: values, envs
 
+  (* Call function with args *)
   | Call args :: rest, _, _ ->
      let args', values' = take_rev args [] values in
      (match values' with
@@ -180,11 +224,15 @@ let step directives values envs = match directives, values, envs with
       | _ -> failwith "type mismatch"
      )
 
+  (* Bind value and push none *)
   | Bind id :: rest, v :: values', env :: _ ->
      (Array.get env.stack id) := v;
      rest, None :: values', envs
+  (* If true then evaluate true block *)
   | If (tblock, _) :: rest, Bool true :: values', _ -> tblock @ rest, values', envs
+  (* If false then evaluate false block *)
   | If (_, fblock) :: rest, Bool false :: values', _ -> fblock @ rest, values', envs
+  (* Reaching here is a bug *)
   | _, _, _ -> failwith "type mismatch"
 
 let stage = ref 0
@@ -212,12 +260,13 @@ let interpret_func func =
   if Option.is_none func.body then
     if FuncMap.mem func.name builtins then
       let _, params = FuncMap.find func.name builtins in
-      Func (params, [], [Builtin func.name; Seq; Push None])
+      Func (params, [], [Builtin func.name; Seq; Push None; BlockEnd])
     else
       failwith "built-in has no definition"
   else
     let locals = List.init func.num_locals (fun _ -> None) in
-    Func (func.num_params, locals, make_block (Option.get func.body))
+    let block = List.fold_left sequence [Push None; BlockEnd] (List.rev (Option.get func.body)) in
+    Func (func.num_params, locals, block)
 
 let interpret debug program =
   let program' = Array.concat (Array.to_list program) in
