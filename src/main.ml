@@ -41,6 +41,7 @@ let speclist =
                          | 3 -> I3.interpret
                          | 4 -> I4.interpret
                          | 5 -> I5.interpret
+                         | 6 -> I6.interpret
                          | _ -> I0.interpret )
     , ": use interpretter"
     )

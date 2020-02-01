@@ -22,7 +22,7 @@ if ! env "$DIR/lambda" -o "$TMP/exec" "$SOURCE"; then
     exit 2
 fi
 
-MAX_INTERP=5
+MAX_INTERP=6
 
 for c in $CASES ; do
     for (( i=0; i <= MAX_INTERP; i++ )) ; do
