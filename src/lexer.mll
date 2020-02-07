@@ -27,12 +27,16 @@ rule token = parse
   | '{' { LBRACE }
   | '}' { RBRACE }
   | ',' { COMMA }
-  | ";" { SEMI }
+  | ';' { SEMI }
+  | ':' { COLON }
   | "\\" { LAMBDA }
   | "->" { ARROW }
   | "func" { FUNC }
   | "if" { IF }
   | "else" { ELSE }
+  | "while" { WHILE }
+  | "continue" { CONTINUE }
+  | "break" { BREAK }
   | "return" { RETURN }
   | "<-" { BIND }
   | "true" { TRUE }

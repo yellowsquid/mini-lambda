@@ -11,6 +11,8 @@ type directive
   | Pop
   | PopEnv
   | Seq
+  | Continue of int
+  | Break of int
   | BlockEnd
   (* Params * Locals * Body *)
   | Capture of int * int * directive list
@@ -18,6 +20,7 @@ type directive
   | Call of int
   | Bind of int
   | If of directive list * directive list
+  | While of id * directive list * directive list * directive list
 and value
   = None
   | Unit
@@ -60,6 +63,8 @@ let rec pp_directive ppf directive = match directive with
   | Pop -> Format.fprintf ppf "Pop"
   | PopEnv -> Format.fprintf ppf "PopEnv"
   | Seq -> Format.fprintf ppf "Seq"
+  | Continue id -> Format.fprintf ppf "Continue(%d)" id
+  | Break id -> Format.fprintf ppf "Break(%d)" id
   | BlockEnd -> Format.fprintf ppf "BlockEnd"
   | Capture (params, captures, body) ->
      Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
@@ -71,7 +76,12 @@ let rec pp_directive ppf directive = match directive with
   | If (tblock, fblock) ->
      Format.fprintf ppf "@[<4>If(";
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [tblock; fblock];
-     Format.fprintf ppf "@])@]"
+     Format.fprintf ppf ")@]"
+  | While (id, cond, lblock, eblock) ->
+     Format.fprintf ppf "@[<4>While(%d" id;
+     list_sep ppf ();
+     Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [cond; lblock; eblock];
+     Format.fprintf ppf ")@]"
 and pp_directive_list ppf directives =
   Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
@@ -154,8 +164,16 @@ let rec flatten_stmt acc stmt = match stmt with
   (* Evaluate condiition branch then continue *)
   | IfStmt (_, cond, tblock, fblock) ->
      flatten_expr (If (make_if_block tblock, make_if_block fblock) :: acc) cond
+  | WhileStmt (_, id, cond, lblock, eblock) ->
+     let lblock' = make_while_block id lblock in
+     let eblock' = make_if_block eblock in
+     let acc' = (While (id, flatten_expr [] cond, lblock', eblock') :: acc) in
+     flatten_expr acc' cond
+  | ContinueStmt (_, id) -> [Continue id]
+  | BreakStmt (_, id) -> [Break id]
 and sequence acc stmt = flatten_stmt (Seq :: acc) stmt
 and make_if_block stmts = List.fold_left sequence [Push None] (List.rev stmts)
+and make_while_block id stmts = List.fold_left sequence [Continue id] (List.rev stmts)
 
 let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
@@ -226,6 +244,26 @@ let step directives values envs = match directives, values, envs with
   | If (tblock, _) :: rest, Bool true :: values', _ -> tblock @ rest, values', envs
   (* If false then evaluate false block *)
   | If (_, fblock) :: rest, Bool false :: values', _ -> fblock @ rest, values', envs
+
+  (* While condition was true so start loop *)
+  | While (_, _, lblock, _) :: _, Bool true :: values', _ -> lblock @ directives, values', envs
+  (* While condition was false so enter end block *)
+  | While (_, _, _, eblock) :: rest, Bool false :: values', _ -> eblock @ rest, values', envs
+  (* Skip until reach correct while *)
+  | Continue id :: rest, _, _ ->
+     let rec iter stack = match stack with
+       | While (id', cond, _, _) :: _ when id = id' -> cond @ stack
+       | _ :: rest -> iter rest
+       | _ -> failwith "Continue without While" in
+     iter rest, values, envs
+  (* Skip until reach correct while *)
+  | Break id :: rest, _, _ ->
+     let rec iter stack = match stack with
+       | While (id', _, _, _) :: rest when id = id' -> rest
+       | _ :: rest -> iter rest
+       | _ -> failwith "Break without While" in
+     iter rest, None :: values, envs
+
   (* Reaching here is a bug *)
   | _, _, _ -> failwith "type mismatch"
 

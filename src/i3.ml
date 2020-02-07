@@ -10,12 +10,15 @@ type directive
   | PopEnv
   | PushNone
   | Seq
+  | Continue of id
+  | Break of id
   (* Params * Locals * Body *)
   | Capture of int * int * directive list
   | Builtin of (env -> value)
   | Call of int
   | Bind of int
   | If of directive list * directive list
+  | While of id * directive list * directive list * directive list
 and value
   = None
   | Unit
@@ -52,6 +55,8 @@ let rec pp_directive ppf directive = match directive with
   | PopEnv -> Format.fprintf ppf "PopEnv"
   | PushNone -> Format.fprintf ppf "PushNone"
   | Seq -> Format.fprintf ppf "Seq"
+  | Continue id -> Format.fprintf ppf "Continue(%d)" id
+  | Break id -> Format.fprintf ppf "Break(%d)" id
   | Capture (params, captures, body) ->
      Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
      pp_directive_list ppf body;
@@ -62,7 +67,12 @@ let rec pp_directive ppf directive = match directive with
   | If (tblock, fblock) ->
      Format.fprintf ppf "@[<4>If(";
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [tblock; fblock];
-     Format.fprintf ppf "@])@]"
+     Format.fprintf ppf ")@]"
+  | While (id, cond, lblock, eblock) ->
+     Format.fprintf ppf "@[<4>While(%d" id;
+     list_sep ppf ();
+     Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [cond; lblock; eblock];
+     Format.fprintf ppf ")@]"
 and pp_directive_list ppf directives =
   Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
@@ -151,6 +161,17 @@ let step directives values envs = match directives, values, envs with
   (* Eval condition then continue *)
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
      Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs
+  (* Eval condition then continue *)
+  | Stmt (WhileStmt (_, id, cond, lblock, eblock)) :: rest, _, _ ->
+     let lblock' = make_block (lblock @ [ContinueStmt (Lexing.dummy_pos, id)]) in
+     let eblock' = make_block eblock in
+     Expr cond :: While (id, [Expr cond], lblock', eblock') :: rest, values, envs
+  (* Start continuing *)
+  | Stmt (ContinueStmt (_, id)) :: rest, _, _ ->
+     Continue id :: rest, values, envs
+  (* Start breaking *)
+  | Stmt (BreakStmt (_, id)) :: rest, _, _ ->
+     Break id :: rest, values, envs
 
   (* Compute binary op then continue *)
   | BinOp op :: rest, rhs :: lhs :: values', _ ->
@@ -205,6 +226,25 @@ let step directives values envs = match directives, values, envs with
   (* If false then evaluate false block *)
   | If (_, fblock) :: rest, Bool false :: values', _ ->
      fblock @ rest, values', envs
+
+  (* While condition was true so start loop *)
+  | While (_, _, lblock, _) :: _, Bool true :: values', _ ->
+     lblock @ directives, values', envs
+  (* While condition was false so enter end block *)
+  | While (_, _, _, eblock) :: rest, Bool false :: values', _ ->
+     eblock @ rest, values', envs
+  (* Continue reached correct while so evaluate condition *)
+  | Continue id :: While (id', cond, lblock, eblock) :: rest, _, _ when id = id' ->
+     cond @ (While (id', cond, lblock, eblock) :: rest), values, envs
+  (* Continue not reached while so skip *)
+  | Continue id :: _ :: rest, _, _ ->
+     Continue id :: rest, values, envs
+  (* Break reached correct while so skip over *)
+  | Break id :: While (id', _, _, _) :: rest, _, _ when id = id' ->
+     rest, None :: values, envs
+  (* Break not reached while so skip *)
+  | Break id :: _ :: rest, _, _ ->
+     Break id :: rest, values, envs
 
   (* Reaching here is a bug *)
   | _, _, _ -> failwith "runtime error"

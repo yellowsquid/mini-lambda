@@ -28,6 +28,9 @@ type cnt
   | IgnoreCnt
   | BindCnt of env * id
   | IfCnt of env * statement list * statement list
+  | WhileCnt of env * id * expr * statement list * statement list
+  | ContinueCnt of id
+  | BreakCnt of id
   | SeqCnt of env * statement list
 
 type step
@@ -84,6 +87,13 @@ let step config = match config with
   (* Eval condition then continue *)
   | Stmt (cnts, env, IfStmt (_, cond, tblock, fblock)) ->
      Expr (IfCnt (env, tblock, fblock) :: cnts, env, cond)
+  (* Eval condition then continue *)
+  | Stmt (cnts, env, WhileStmt (_, id, cond, lblock, eblock)) ->
+     Expr (WhileCnt (env, id, cond, lblock, eblock) :: cnts, env, cond)
+  (* Push continue control statement then continue *)
+  | Stmt (cnts, _, ContinueStmt (_, id)) -> Apply (ContinueCnt id :: cnts, None)
+  (* Push break control statement then continue *)
+  | Stmt (cnts, _, BreakStmt (_, id)) -> Apply (BreakCnt id :: cnts, None)
 
   (* Noting to do so done *)
   | Apply ([], value) -> Apply ([], value)
@@ -146,6 +156,30 @@ let step config = match config with
   | Apply (IfCnt (env, tblock, _) :: rest, Bool true) -> Apply (SeqCnt (env, tblock) :: rest, None)
   (* If condition was false then evaluate fblock *)
   | Apply (IfCnt (env, _, fblock) :: rest, Bool false) -> Apply (SeqCnt (env, fblock) :: rest, None)
+
+  (* While condition was true then evaluate loop block *)
+  | Apply (WhileCnt (env, id, cond, lblock, eblock) :: rest, Bool true) ->
+     Apply (SeqCnt (env, lblock) :: (WhileCnt (env, id, cond, lblock, eblock)) :: rest, None)
+  (* While condition was false then evalue else block *)
+  | Apply (WhileCnt (env, _, _, _, eblock) :: rest, Bool false) ->
+     Apply (SeqCnt (env, eblock) :: rest, None)
+  (* While loop finished so re-evaluate condition *)
+  | Apply (WhileCnt (env, id, cond, lblock, eblock) :: rest, None) ->
+     Expr (WhileCnt (env, id, cond, lblock, eblock) :: rest, env, cond)
+
+  (* Continue followed by correct while so drop it *)
+  | Apply (ContinueCnt id :: WhileCnt (env, id', cond, lblock, eblock) :: rest, None)
+       when id' = id ->
+     Expr (WhileCnt (env, id', cond, lblock, eblock) :: rest, env, cond)
+  (* Continue followed by something else so march on *)
+  | Apply (ContinueCnt id :: _ :: rest, None) -> Apply (ContinueCnt id :: rest, None)
+
+  (* Break followed by correct while so drop it *)
+  | Apply (BreakCnt id :: WhileCnt (_, id', _, _, _) :: rest, None) when id' = id ->
+     Apply (rest, None)
+  (* Break followed by something else so march on *)
+  | Apply (BreakCnt id :: _ :: rest, None) -> Apply (BreakCnt id :: rest, None)
+
   (* No more statements so apply to None *)
   | Apply (SeqCnt (_, []) :: rest, None) -> Apply (rest, None)
   (* Returned none so eval next statement *)

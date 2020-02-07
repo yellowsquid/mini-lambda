@@ -87,6 +87,7 @@ let lower program =
                                :: lower_body [] first_block in
             let nested = second_block' @ first_block' @ (Ir.If(id, else_id) :: lower_expr acc cond) in
             lower_body nested rest
+         | _ :: rest -> lower_body acc rest (* Cop-out *)
          | [] ->
             acc
        in

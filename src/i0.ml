@@ -7,6 +7,8 @@ exception Error of Typed_ast.loc * string
 
 type value
   = None
+  | Break of int
+  | Continue of int
   | Unit
   | Bool of bool
   | Int of int
@@ -21,6 +23,8 @@ and env =
 
 let value_to_string value = match value with
   | None -> "!"
+  | Break id -> Printf.sprintf "Break(%d)" id
+  | Continue id -> Printf.sprintf "Continue(%d)" id
   | Unit -> "()"
   | Bool(b) -> string_of_bool b
   | Int(i) -> string_of_int i
@@ -125,10 +129,23 @@ let rec interpret_stmt env stmt =
      );
      None
   | IfStmt(pos, cond, then_block, else_block) ->
-     match interpret_expr env cond with
-     | Bool(true) -> apply_block env then_block
-     | Bool(false) -> apply_block env else_block
-     | _ -> raise(Error(pos, "condition with not a bool"))
+     (match interpret_expr env cond with
+      | Bool(true) -> apply_block env then_block
+      | Bool(false) -> apply_block env else_block
+      | _ -> raise(Error(pos, "condition with not a bool")))
+  | WhileStmt (pos, id, cond, lblock, eblock) ->
+     (match interpret_expr env cond with
+      | Bool true ->
+         (match apply_block env lblock with
+          | None -> interpret_stmt env (WhileStmt (pos, id, cond, lblock, eblock))
+          | Break id' when id' = id -> None
+          | Continue id' when id' = id ->
+             interpret_stmt env (WhileStmt (pos, id, cond, lblock, eblock))
+          | x -> x)
+      | Bool false -> apply_block env eblock
+      | _ -> raise (Error (pos, "condition with not a bool")))
+  | ContinueStmt (_, id) -> Continue id
+  | BreakStmt (_, id) -> Break id
 and apply_block env stmts =
   match stmts with
   | [] -> None

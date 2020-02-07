@@ -59,6 +59,7 @@ type type_scope
   | FuncScope of (int * ty) IdentMap.t * ty
   | BindScope of (int * ty) IdentMap.t
   | LambdaScope of (int * ty) IdentMap.t * (lambda_capture IdentMap.t) ref
+  | LabelScope of int IdentMap.t * int option
 
 (* Occurs check *)
 let rec occurs loc r ty = match ty with
@@ -105,6 +106,30 @@ let new_ty_var () =
   let idx = !ty_idx in
   ty_idx := idx + 1;
   TyVar (ref (Unbound idx))
+
+(* Helper to generate while labels. *)
+let add_label, get_label =
+  let label_idx = ref 0 in
+  let rec eval_add label scope = match scope with
+    | [] -> None
+    | LabelScope (map, _) :: rest ->
+       let new_id = !label_idx in
+       incr label_idx;
+       Some (new_id, LabelScope (IdentMap.add label new_id map, Some new_id) :: rest)
+    | v :: rest ->
+       Option.map (fun (id, rest') -> id, v :: rest') (eval_add label rest) in
+  let rec do_get label scope = match scope with
+    | [] -> None
+    | LabelScope (map, _) :: _ -> IdentMap.find_opt label map
+    | _ :: rest -> do_get label rest in
+  let rec do_current scope = match scope with
+    | [] -> None
+    | LabelScope (_, last) :: _ -> last
+    | _ :: rest -> do_current rest in
+  let eval_get label scope = match label with
+    | Some l -> do_get l scope
+    | None -> do_current scope in
+  eval_add, eval_get
 
 (* Generalises a type *)
 let rec generalise ty
@@ -286,14 +311,37 @@ let rec check_statements ret_ty acc scope stats
          (* TODO: suggest e; if type is unit *)
          let node = Typed_ast.ExprStmt(loc, e') in
          iter (nb, node :: acc) scope rest
-      | IfStmt(loc, cond, true_branch, false_branch) :: rest ->
+      | IfStmt(loc, cond, tblock, fblock) :: rest ->
          let cond', cond_ty = check_expr scope cond in
          unify loc cond_ty TyBool;
          let ret_ty = new_ty_var () in
-         let nb', true_acc' = check_statements ret_ty (nb, []) scope true_branch in
-         let nb'', false_acc' = check_statements ret_ty (nb, []) scope false_branch in
-         let node = Typed_ast.IfStmt(loc, cond', (List.rev true_acc'), (List.rev false_acc')) in
-         iter ((max nb' nb''), node :: acc) scope rest
+         let nb', true_acc' = check_statements ret_ty (nb, []) scope tblock in
+         let nb'', false_acc' = check_statements ret_ty (nb, []) scope fblock in
+         let node = Typed_ast.IfStmt(loc, cond', List.rev true_acc', List.rev false_acc') in
+         iter (max nb' nb'', node :: acc) scope rest
+      | WhileStmt(loc, cond, lblock, eblock, label) :: rest ->
+         let cond', cond_ty = check_expr scope cond in
+         unify loc cond_ty TyBool;
+         let ret_ty  = new_ty_var () in
+         let id, scope' = match add_label (Option.value label ~default:"_") scope with
+           | None -> raise (Error (loc, "not in function."))
+           | Some (x, y) -> x, y in
+         let nb', lacc = check_statements ret_ty (nb, []) scope' lblock in
+         let nb'', eacc = check_statements ret_ty (nb, []) scope eblock in
+         let node = Typed_ast.WhileStmt (loc, id, cond', List.rev lacc, List.rev eacc) in
+         iter (max nb' nb'', node :: acc) scope rest
+      | ContinueStmt(loc, label) :: rest ->
+         let id = match get_label label scope with
+           | None -> raise (Error (loc, "failed to find loop."))
+           | Some x -> x in
+         let node = Typed_ast.ContinueStmt (loc, id) in
+         iter (nb, node :: acc) scope rest
+      | BreakStmt(loc, label) :: rest ->
+         let id = match get_label label scope with
+           | None -> raise (Error (loc, "failed to find loop."))
+           | Some x -> x in
+         let node = Typed_ast.BreakStmt (loc, id) in
+         iter (nb, node :: acc) scope rest
       | [] ->
          (nb, acc)
     in iter acc scope stats
@@ -321,19 +369,25 @@ let rec find_refs_stat bound stats
       List.fold_left
         (fun (bound, acc) stat ->
           match stat with
-          | ReturnStmt(_, e) ->
+          | ReturnStmt (_, e) ->
              (bound, find_refs_expr bound acc e)
-          | ExprStmt(_, e) ->
+          | ExprStmt (_, e) ->
              (bound, find_refs_expr bound acc e)
-          | BindStmt(_, name, e) ->
+          | BindStmt (_, name, e) ->
              (* The expression can refer to previous instances of 'name'. *)
              (name :: bound, find_refs_expr bound acc e)
-          | IgnoreStmt(_, e) ->
+          | IgnoreStmt (_, e) ->
              (bound, find_refs_expr bound acc e)
-          | IfStmt(_, cond, true_branch, false_branch) ->
+          | IfStmt (_, cond, tblock, fblock) ->
              (bound, (find_refs_expr bound acc cond)
-                     @ (find_refs_stat bound true_branch)
-                     @ (find_refs_stat bound false_branch))
+                     @ (find_refs_stat bound tblock)
+                     @ (find_refs_stat bound fblock))
+          | WhileStmt (_, cond, lblock, eblock, _) ->
+             (bound, (find_refs_expr bound acc cond)
+                     @ (find_refs_stat bound lblock)
+                     @ (find_refs_stat bound eblock))
+          | ContinueStmt _ -> (bound, acc)
+          | BreakStmt _ -> (bound, acc)
         ) (bound, []) stats
     in acc
 
@@ -464,7 +518,8 @@ let check prog =
                   ) IdentMap.empty func.params
               in
               let ret = new_ty_var () in
-              let scope = FuncScope(args, ret) :: group_scope in
+              let label_scope = LabelScope (IdentMap.empty, None) in
+              let scope = label_scope :: FuncScope (args, ret) :: group_scope in
               (* Recursively check the function. *)
               let new_body, num_locals =
                 (match func.body with

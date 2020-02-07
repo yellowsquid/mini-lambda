@@ -124,18 +124,25 @@ let builtins = FuncMap.of_seq (List.to_seq [ "print_int", (print_int, 1)
 
 let funcs = ref (Array.of_list [])
 
-let add_block, get_block =
+let add_block, get_block, reserve_loop, get_loop, get_continue, set_loop =
   let block_id = ref 0 in
   let next_block () =
     let block = !block_id in
     incr block_id; block in
   let blocks = ref (BlockMap.add (-1) [] BlockMap.empty) in
+  let loops = ref BlockMap.empty in
   let eval_add block =
     let this_block = next_block () in
     blocks := BlockMap.add this_block block !blocks;
     this_block in
   let eval_get block = BlockMap.find block !blocks in
-  eval_add, eval_get
+  let reserve_loop id continue =
+    let this_block = next_block () in
+    loops := BlockMap.add id (this_block, continue) !loops in
+  let get_loop id = fst (BlockMap.find id !loops) in
+  let get_continue id = snd (BlockMap.find id !loops) in
+  let set_loop id block = blocks := BlockMap.add (get_loop id) block !blocks in
+  eval_add, eval_get, reserve_loop, get_loop, get_continue, set_loop
 
 let rec flatten_expr acc expr = match expr with
   | FuncExpr (_, id) -> PushFunc id :: acc
@@ -162,6 +169,15 @@ let rec flatten_stmt acc stmt = match stmt with
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = add_block acc in
      flatten_expr [If (make_block tblock continue, make_block fblock continue)] cond
+  | WhileStmt (_, id, cond, lblock, eblock) ->
+     let continue = add_block acc in
+     reserve_loop id continue;
+     let lblock' = make_block lblock (get_loop id) in
+     let eblock' = make_block eblock continue in
+     set_loop id (flatten_expr [If (lblock', eblock')] cond);
+     [Jump (get_loop id)]
+  | ContinueStmt (_, id) -> Jump (get_loop id) :: acc
+  | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block stmts continue =
   add_block (List.fold_left flatten_stmt [Jump continue] (List.rev stmts))
 

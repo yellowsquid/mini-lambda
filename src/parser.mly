@@ -20,12 +20,13 @@
 %token LPAREN RPAREN LBRACE RBRACE
 %token FUNC
 %token IF ELSE
+%token WHILE CONTINUE BREAK
 %token RETURN
 %token ARROW
 %token LAMBDA
 %token BIND
 %token COMMA
-%token SEMI
+%token SEMI COLON
 %token EOF
 
 %start program
@@ -52,6 +53,8 @@ statements:
 
 statement:
   | if_statement { $1 }
+  | while_statement { $1 }
+  | loop_statement { $1 }
   | RETURN expr SEMI { ReturnStmt($startpos, $2) }
   | IDENT BIND expr SEMI { BindStmt($startpos, $1, $3) }
   | IGNORE BIND expr SEMI { IgnoreStmt($startpos, $3) }
@@ -64,6 +67,22 @@ if_statement:
     { IfStmt($startpos, $2, $4, $7 :: []) }
   | IF expr LBRACE statements RBRACE ELSE LBRACE statements RBRACE
     { IfStmt($startpos, $2, $4, $8) }
+
+while_statement:
+  | WHILE expr LBRACE statements RBRACE
+    { WhileStmt($startpos, $2, $4, [], None) }
+  | WHILE expr LBRACE statements RBRACE ELSE LBRACE statements RBRACE
+    { WhileStmt($startpos, $2, $4, $8, None) }
+  | IDENT COLON WHILE expr LBRACE statements RBRACE
+    { WhileStmt($startpos, $4, $6, [], Some($1)) }
+  | IDENT COLON WHILE expr LBRACE statements RBRACE ELSE LBRACE statements RBRACE
+    { WhileStmt($startpos, $4, $6, $10, Some($1)) }
+
+loop_statement:
+  | CONTINUE SEMI { ContinueStmt($startpos, None) }
+  | CONTINUE IDENT SEMI { ContinueStmt($startpos, Some($2)) }
+  | BREAK SEMI { BreakStmt($startpos, None) }
+  | BREAK IDENT SEMI { BreakStmt($startpos, Some($2)) }
 
 expr:
   | unary_expr { $1 }

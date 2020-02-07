@@ -142,12 +142,13 @@ let rec cleanup directives cnt = match directives with
   | If (tblock, fblock) :: _ -> cnt [If (tblock, fblock)]
   | x :: rest -> cleanup rest (fun rest' -> cnt (x :: rest'))
 
-let add_block, get_block, flatten_blocks =
+let add_block, get_block, flatten_blocks, reserve_loop, get_loop, get_continue, set_loop =
   let block_id = ref 1 in
   let next_block () =
     let block = !block_id in
     incr block_id; block in
   let blocks = ref (BlockMap.add 0 [] BlockMap.empty) in
+  let loops = ref BlockMap.empty in
   let eval_add block =
     let this_block = next_block () in
     cleanup block (fun block' ->
@@ -160,7 +161,14 @@ let add_block, get_block, flatten_blocks =
         let pos = List.length !output in
         output := dirs @ !output;
         pos) !blocks in
-  eval_add, eval_get, eval_flattens
+  let reserve_loop id continue =
+    let this_block = next_block () in
+    loops := BlockMap.add id (this_block, continue) !loops in
+  let get_loop id = fst (BlockMap.find id !loops) in
+  let get_continue id = snd (BlockMap.find id !loops) in
+  let set_loop id block =
+    cleanup block (fun block' -> blocks := BlockMap.add (get_loop id) block' !blocks) in
+  eval_add, eval_get, eval_flattens, reserve_loop, get_loop, get_continue, set_loop
 
 (* Stack is args, return address, locals, temp, ... *)
 (* Depth points to return address *)
@@ -200,6 +208,15 @@ let rec flatten_stmt env acc stmt =
      let continue = [Jump (add_block acc)] in
      let acc' = [If (make_block env tblock continue, make_block env fblock continue)] in
      flatten_expr env acc' depth cond
+  | WhileStmt (_, id, cond, lblock, eblock) ->
+     let continue = add_block acc in
+     reserve_loop id continue;
+     let lblock' = make_block env lblock [Jump (get_loop id)] in
+     let eblock' = make_block env eblock [Jump continue] in
+     set_loop id (flatten_expr env [If (lblock', eblock')] depth cond);
+     [Jump (get_loop id)]
+  | ContinueStmt (_, id) -> Jump (get_loop id) :: acc
+  | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block env stmts acc =
   add_block (List.fold_left (flatten_stmt env) acc (List.rev stmts))
 

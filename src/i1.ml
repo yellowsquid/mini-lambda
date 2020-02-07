@@ -7,6 +7,8 @@ exception Error of loc * string
 
 type value
   = None
+  | Break of int
+  | Continue of int
   | Unit
   | Bool of bool
   | Int of int
@@ -21,6 +23,8 @@ and env =
 
 let value_to_string value = match value with
   | None -> "!"
+  | Break id -> Printf.sprintf "Break(%d)" id
+  | Continue id -> Printf.sprintf "Continue(%d)" id
   | Unit -> "()"
   | Bool(b) -> string_of_bool b
   | Int(i) -> string_of_int i
@@ -54,7 +58,7 @@ let do_unary_op pos op e = match op, e with
 
 let rec fold_left_cnt f acc list cnt = match list with
   | [] -> cnt acc
-  | x :: rest -> f acc x (fun acc' -> fold_left_cnt f acc' rest cnt)
+  | x :: rest -> f cnt acc x (fun acc' -> fold_left_cnt f acc' rest cnt)
 
 let print_cnt expr debug =
   if debug then
@@ -110,7 +114,7 @@ let rec eval_expr env expr cnt =
              match callee' with
              | Lambda f -> f env (List.rev args') cnt
              | _ -> failwith "expected lambda"))
-and eval_exprs env acc expr cnt = eval_expr env expr (fun value -> cnt (value :: acc))
+and eval_exprs env _ acc expr cnt = eval_expr env expr (fun value -> cnt (value :: acc))
 
 let rec eval_stmt env stmt cnt =
   if env.debug then begin
@@ -138,7 +142,23 @@ let rec eval_stmt env stmt cnt =
            | Bool true -> tblock
            | Bool false -> fblock
            | _ -> failwith "expected bool" in
-         fold_left_cnt (eval_stmts env cnt) None block cnt)
+         fold_left_cnt (eval_stmts env) None block cnt)
+  (* Evaluate condition then either first block or second. May have to loop *)
+  | WhileStmt (pos, id, cond, lblock, eblock) ->
+     eval_expr env cond (fun cond' ->
+         match cond' with
+         | Bool false -> fold_left_cnt (eval_stmts env) None eblock cnt
+         | Bool true ->
+            fold_left_cnt (eval_stmts env) None lblock (fun loop' ->
+                match loop' with
+                | None -> eval_stmt env (WhileStmt (pos, id, cond, lblock, eblock)) cnt
+                | Break id' when id' = id -> cnt None
+                | Continue id' when id' = id ->
+                   eval_stmt env (WhileStmt (pos, id, cond, lblock, eblock)) cnt
+                | x -> cnt x)
+         | _ -> failwith "expected bool")
+  | ContinueStmt (_, id) -> cnt (Continue id)
+  | BreakStmt (_, id) -> cnt (Break id)
 and eval_stmts env escape _ stmt cnt =
   eval_stmt env stmt (fun value ->
       match value with
@@ -180,7 +200,7 @@ let interpret_func func =
                    ; args = Array.of_list args
                    ; debug = env.debug
                    } in
-        fold_left_cnt (eval_stmts env' cnt) None (Option.get func.body) cnt in
+        fold_left_cnt (eval_stmts env') None (Option.get func.body) cnt in
     Lambda eval
 
 let interpret debug program =
