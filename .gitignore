@@ -1,4 +1,3 @@
-
 # Created by https://www.gitignore.io/api/assembler,ocaml
 # Edit at https://www.gitignore.io/?templates=assembler,ocaml
 
@@ -44,3 +43,13 @@ _build.prev/
 node_modules/
 
 # End of https://www.gitignore.io/api/assembler,ocaml
+
+*.run
+*.S
+*.i0
+*.i1
+*.i2
+*.i3
+*.i4
+*.i5
+*.i6

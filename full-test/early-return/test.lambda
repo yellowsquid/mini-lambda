@@ -1,0 +1,14 @@
+extern input_int() : Int;
+extern print_int(Int) : Unit;
+
+func return_early(n){
+    if n == 3 {
+        return 3;
+    }
+
+    return n + 1;
+}
+
+func main() {
+    print_int(return_early(input_int()));
+}

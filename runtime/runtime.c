@@ -8,40 +8,49 @@
 long used = 0;
 long capacity = 0;
 
-long *print_int(long *heap, long *stack) {
-  printf("%ld\n", *stack);
-  *stack = 0;
+// Get function with:
+// - args above stack
+// - return address at stack
+
+// Pass back stack with
+// - return value at stack
+// - return address above stack
+// - args above return address
+
+
+pointer_t print_int(pointer_t heap, pointer_t stack) {
+  printf("%ld\n", *(stack + 1));
+  *(--stack) = 0;
   return stack;
 }
 
-long *print_bool(long *heap, long *stack) {
-  if (*stack) {
-    puts("true\n");
+pointer_t print_bool(pointer_t heap, pointer_t stack) {
+  if (*(stack + 1)) {
+    puts("true");
   } else {
-    puts("false\n");
+    puts("false");
   }
-  *stack = 0;
+  *(--stack) = 0;
   return stack;
 }
 
-long *input_int(long *heap, long *stack) {
-  stack--;
-  scanf("%ld", stack);
+pointer_t input_int(pointer_t heap, pointer_t stack) {
+  scanf("%ld", --stack);
   return stack;
 }
 
-long *lambda_alloc(long *heap, long size) {
+pointer_t lambda_alloc(pointer_t heap, long size) {
   if (size + used > capacity) {
     exit(2);
   } else {
-    long *out = &heap[used];
+    pointer_t out = &heap[used];
     used += size;
     return out;
   }
 }
 
 int main(void) {
-  long *heap = malloc(HEAP_SIZE * sizeof (*heap));
+  pointer_t heap = malloc(HEAP_SIZE * sizeof (*heap));
 
   if (!heap) {
     return 1;

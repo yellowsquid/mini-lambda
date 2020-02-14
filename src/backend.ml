@@ -36,7 +36,7 @@ let compile_block debug out id insts =
       | UnaryOp Invert -> Printf.fprintf out "\txorq $1, (%%rsp) # Invert stack top\n"
       | AllocHeap (stacked, Func (locals, block)) when stacked = locals ->
          Printf.fprintf out "\tmovq %%rsp, %%rbx # Save stack pointer\n";
-         Printf.fprintf out "\tsubq $32, %%rsp # Make space on stack\n";
+         Printf.fprintf out "\tsubq $64, %%rsp # Make space on stack\n";
          Printf.fprintf out "\tandq $-16, %%rsp # Align stack to 16-byte boundary\n";
          Printf.fprintf out "\tmovq %%r12, %%rdi # Set first arg to heap pointer\n";
          Printf.fprintf out "\tmovq $%d, %%rsi # Set second arg to space needed\n" (locals + 2);
@@ -71,7 +71,7 @@ let compile_block debug out id insts =
       | Pop -> Printf.fprintf out "\tpopq %%rcx # Pop value from stack\n";
       | Builtin name ->
          Printf.fprintf out "\tmovq %%rsp, %%rbx # Save stack pointer\n";
-         Printf.fprintf out "\tsubq $32, %%rsp # Make space on stack\n";
+         Printf.fprintf out "\tsubq $64, %%rsp # Make space on stack\n";
          Printf.fprintf out "\tandq $-16, %%rsp # Align stack to 16-byte boundary\n";
          Printf.fprintf out "\tmovq %%r12, %%rdi # Set first arg to heap pointer\n";
          Printf.fprintf out "\tmovq %%rbx, %%rsi # Set second arg to stack pointer\n";
@@ -88,6 +88,7 @@ let compile_block debug out id insts =
          Printf.fprintf out "\taddq $%d, %%rsp # Pop locals\n" (8 * locals);
          Printf.fprintf out "\tpopq %%rax # Pop return address\n";
          Printf.fprintf out "\taddq $%d, %%rsp # Pop args and callee\n" (8 + 8 * args);
+         Printf.fprintf out "\tpushq %%rcx # Push return value\n";
          Printf.fprintf out "\tjmp *%%rax # Jump to return address\n"
       | Jump block -> Printf.fprintf out "\tjmp _block_%d # Jump to block\n" block
       | If (tblock, fblock) ->

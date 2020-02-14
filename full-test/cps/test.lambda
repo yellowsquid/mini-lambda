@@ -1,0 +1,15 @@
+extern print_int(Int) : Unit;
+
+func fib(n, c) {
+    if n == 0 {
+        return c(0);
+    } else if n == 1 {
+        return c(1);
+    } else {
+        return fib(n - 1, \(a) -> fib(n - 2, \(b) -> c(a + b)));
+    }
+}
+
+func main() {
+    fib(5, print_int);
+}

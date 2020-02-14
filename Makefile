@@ -4,8 +4,14 @@ PREFIX_ARG := $(if $(PREFIX),--prefix $(PREFIX),)
 LIBDIR_ARG := $(if $(LIBDIR),--libdir $(LIBDIR),)
 DESTDIR_ARG := $(if $(DESTDIR),--destdir $(DESTDIR),)
 INSTALL_ARGS := $(PREFIX_ARG) $(LIBDIR_ARG) $(DESTDIR_ARG)
-CC := dune
-OUT := lambda
+
+SRC_DEPS:=$(wildcard src/*.ml*)
+OUT := _build/install/default/bin/lambda
+
+LAMBDA=$(abspath $(OUT))
+RUNTIME=$(abspath runtime/runtime)
+export LAMBDA
+export RUNTIME
 
 # Dependencies used for developing and testing dune
 DEV_DEPS := \
@@ -16,22 +22,22 @@ utop
 -include Makefile.dev
 
 release: $(OUT)
-	$(CC) build
+	dune build
 
-lambda:
-	$(MAKE) -C src lambda
+$(OUT): $(SRC_DEPS)
+	(cd src && dune build)
 
 dev: $(OUT)
-	$(CC) build @install
+	dune build @install
 
 all: $(OUT)
-	$(CC) build
+	dune build
 
 install:
 	$(BIN) install $(INSTALL_ARGS) dune
 
 uninstall:
-	$(CC) uninstall $(INSTALL_ARGS) dune
+	dune uninstall $(INSTALL_ARGS) dune
 
 reinstall: uninstall install
 
@@ -40,30 +46,34 @@ dev-switch:
 	opam install -y $(DEV_DEPS)
 
 test: $(OUT)
-	$(CC) runtest
+	dune runtest
+
+fulltest: $(OUT)
+	$(MAKE) -C full-test
 
 check: $(OUT)
-	$(CC) build @check
+	dune build @check
 
 fmt: $(OUT)
-	$(CC) build @fmt --auto-promote
+	dune build @fmt --auto-promote
 
 promote: $(OUT)
-	$(CC) promote
+	dune promote
 
 accept-corrections: promote
 
 clean: $(OUT)
-	$(CC) clean || true
-	rm -rf _build
+	-dune clean
+	-rm -rf _build
+	$(MAKE) -C full-test clean
 
 distclean: clean
-	rm -f src/dune/setup.ml
+	-rm -f src/dune/setup.ml
 
 doc:
 	cd doc && sphinx-build . _build
 
-livedoc:
+livedoc:h
 	cd doc && sphinx-autobuild . _build \
 	  -p 8888 -q  --host $(shell hostname) -r '\.#.*'
 
@@ -76,7 +86,8 @@ ifeq (dune,$(firstword $(MAKECMDGOALS)))
 endif
 
 dune: $(OUT)
-	$(CC) $(RUN_ARGS)
+	dune $(RUN_ARGS)
 
 .PHONY: default install uninstall reinstall clean test doc dev-switch
 .PHONY: promote accept-corrections opam-release dune check fmt
+.PHONY: fulltest

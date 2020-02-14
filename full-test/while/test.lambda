@@ -1,0 +1,38 @@
+extern print_int(Int) : Unit;
+
+func iter_fib(n) {
+    last <- 0;
+    current <- 1;
+
+    if n == 0 {
+        return 0;
+    }
+
+    step <- 1;
+
+    while step != n {
+        next <- last + current;
+        last <- current;
+        current <- next;
+        step <- step + 1;
+    } else {
+        return current;
+    }
+}
+
+func main() {
+    i <- 0;
+
+  main_loop:
+    while true {
+        print_int(iter_fib(i));
+
+        i <- i + 1;
+
+        if i == 10 {
+            break main_loop;
+        } else {
+            continue;
+        }
+    }
+}

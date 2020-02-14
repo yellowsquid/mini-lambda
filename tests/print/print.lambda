@@ -1,7 +1,0 @@
-func print_int(x);
-func print_bool(b);
-
-func main() {
-    print_int(3);
-    print_bool(true);
-}

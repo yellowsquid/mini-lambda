@@ -1,0 +1,7 @@
+extern print_int(Int) : Unit;
+
+func main() {
+    x <- 3;
+    x <- 2;
+    print_int(x);
+}

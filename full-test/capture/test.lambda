@@ -1,0 +1,10 @@
+extern print_int(Int) : Unit;
+extern input_int() : Int;
+
+func f(x, c) {
+    return \(y) -> (c(x + y));
+}
+
+func main() {
+    (f(input_int(), print_int))(input_int());
+}
