@@ -62,7 +62,7 @@ make install
 
 Compile from `lambda` to `x86_64` assembly. You will need to link the [runtime] manually.
 
-[runtime]: #Runtime
+[runtime]: #runtime
 
 ``` shell
 lambda -o <output.S> <input.lambda>
