@@ -2,22 +2,94 @@
 
 Minimal lambda language for the Compiler Construction course supervisions.
 
+## Development
+
 ### Prerequisites
 
-`opam2` is required to install `dune` and the `menhir` parser generator.
+You need the following to be able to create the development environment.
 
+- [dune]
+- [make]
+- [opam]
 
-### Usage
+Most Linux distributions have packages available for these tools.
 
+[dune]: https://dune.build
+[make]: https://www.gnu.org/software/make/
+[opam]: https://opam.ocaml.org/
 
-To compile a file and dump assembly to stdout, run:
+### Hacking
 
+Create the development environment.
+
+``` shell
+make dev-switch
 ```
-lambda <path-to-file>
+
+Run tests.
+
+``` shell
+make test
 ```
 
-To link with the runtime and produce an executable:
+Create static documentation.
 
+``` shell
+make doc
 ```
-lambda <path-to-file> -o <path-to-output>
+
+Create live documentation.
+
+``` shell
+make livedoc
+```
+
+## Installation
+
+First build the executable.
+
+``` shell
+make
+```
+
+Then install.
+
+``` shell
+make install
+```
+
+## Running
+
+Compile from `lambda` to `x86_64` assembly. You will need to link the [runtime] manually.
+
+[runtime]: #Runtime
+
+``` shell
+lambda -o <output.S> <input.lambda>
+```
+
+Run the `Ocaml` interpreter.
+
+``` shell
+lambda -i0 <input.lambda>
+```
+
+Run a lower-level `Ocaml` interpreter.
+
+``` shell
+lambda -i6 <input.lambda>
+```
+
+### Runtime
+
+Build the runtime.
+
+``` shell
+cc -c runtime/runtime.c -o runtime/runtime.o
+```
+
+Link the runtime.
+
+``` shell
+cc <input.S> runtime/runtime.o -o <output>
 ```

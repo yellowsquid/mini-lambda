@@ -1,11 +1,12 @@
-
 (ocamllex lexer)
 
 (menhir
   (infer false)
   (modules parser))
 
-
 (executable
-  (name main))
+  (name lambda))
 
+(install
+ (section bin)
+ (files (lambda.exe as lambda)))

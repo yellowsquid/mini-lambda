@@ -9,81 +9,118 @@
  * Some helper methods to dump the IR are also included.
  *)
 
+type block = int
+type stack_pointer = int
+type heap_pointer = int
+type function_pointer = int
+
+(* Values that occupy the stack *)
+type stack_value
+  (* Unit value *)
+  = Unit
+  (* Boolean value *)
+  | Bool of bool
+  (* Integer value *)
+  | Int of int
+  (* Code pointer *)
+  | CodeIndex of block
+  (* Heap pointer *)
+  | HeapIndex of heap_pointer
+
+(* Values that occupy the heap *)
+type heap_value
+  (* Wrapper for stack values *)
+  = Sized of stack_value
+  (* Function with locals and body *)
+  | Func of int * block
+
+(* Instructions to execute *)
 type inst
-  (* Pushes the address of a closure onto the stack. *)
-  (* This is not a function - it is a block of memory whose first field is *)
-  (* a pointer to the actual function. This is due to the lack of distinction *)
-  (* between functions and closures in the runtime. *)
-  = GetClosure of int
-  (* Pushes a closure for a builtin, provided by the standard library. *)
-  | GetBuiltin of string
-  (* Pushes an environment variable, relative to the environment pointer. *)
-  | GetEnv of int
-  (* Pushes an argument - peeks up the stack. *)
-  | GetArg of int
-  (* Pushes a local onto the stack. *)
-  | GetLocal of int
-  (* Pops a value and sets a local. *)
-  | SetLocal of int
-  (* Pops a constant onto the stack. *)
-  | ConstInt of int
-  (* Pops a number of values and pushes a closure capturing them. *)
-  | Closure of int * int
-  (* Jumps to label if false. *)
-  | If of int * int
-  (* Label for a jump target. *)
-  | Label of int * int
-  (* Jump to a label. *)
-  | Jump of int * int
-  (* Pops two values and pushes the result of op. *)
-  | BinOp of Ops.bin_op
-  (* Pops one value and pushes the result of op. *)
+  (* Binary operation. Pops two values (rhs then lhs) and pushes result. *)
+  = BinOp of Ops.bin_op
+  (* Unary operation. Pops one value and pushes result. *)
   | UnaryOp of Ops.unary_op
-  (* Pops a closure and invokes it. *)
-  | Call
-  (* Pops a return value and returns. *)
-  | Return
-  (* Discards the value from the top of the stack. *)
+  (* Allocate space on the heap, push value to heap, then shift items from stack top.
+   * Pushes heap pointer *)
+  | AllocHeap of int * heap_value
+  (* Pushes a function pointer to the stack. *)
+  | PushFunc of function_pointer
+  (* Pushes a value from lower on the stack to the top. The value is copied. *)
+  | PushStack of stack_pointer
+  (* Pushes a constant onto the stack.
+   * Pointer valid before push. *)
+  | Push of stack_value
+  (* Pops top of stack and assigns local to it.
+   * Pointer valid before pop. *)
+  | Bind of stack_pointer
+  (* Pops a value from the stack. *)
   | Pop
+  (* Calls a builtin function. *)
+  | Builtin of string
+  (* Calls a lambda function. The top items are arguments.
+     Pushes return location then local variables and finally jumps to function. *)
+  | Call of int * block
+  (* Return from a function. Parameters are number of locals then number of args *)
+  | Return of int * int
+  (* Jump to a block. *)
+  | Jump of block
+  (* Pop value from the stack. Jump to first if true, and second if false. *)
+  | If of block * block
 
-type closure =
-  { id: int
-  ; name: string option
-  ; num_params: int
-  ; num_captures: int
-  ; num_locals: int
-  ; insts: inst array
+module BlockMap = Map.Make(Int)
+
+let list_sep ppf _ = Format.fprintf ppf ",@ "
+
+let pp_stack_value ppf value = match value with
+  | Unit -> Format.fprintf ppf "()"
+  | Bool b -> Format.fprintf ppf "%B" b
+  | Int i -> Format.fprintf ppf "%d" i
+  | CodeIndex i -> Format.fprintf ppf "@%d" i
+  | HeapIndex i -> Format.fprintf ppf "*%d" i
+
+let pp_stack_value_list ppf values =
+  Format.fprintf ppf "@[<1>(";
+  Format.pp_print_list ~pp_sep:list_sep pp_stack_value ppf (List.map (!) values);
+  Format.fprintf ppf ")@]"
+
+let pp_heap_value ppf value = match value with
+  | Sized v -> pp_stack_value ppf v
+  | Func (locals, body) -> Format.fprintf ppf "Func(%d, %d)" locals body
+
+let pp_heap_value_list ppf values =
+  Format.fprintf ppf "@[<1>(";
+  Format.pp_print_list ~pp_sep:list_sep pp_heap_value ppf (List.map (!) values);
+  Format.fprintf ppf ")@]"
+
+let rec pp_inst ppf inst = match inst with
+  | BinOp op -> Format.fprintf ppf "BinOp(%s)" (Ops.string_of_bin_op op)
+  | UnaryOp op -> Format.fprintf ppf "UnaryOp(%s)" (Ops.string_of_unary_op op)
+  | AllocHeap (i, v) ->
+     Format.fprintf ppf "@[<4>AllocHeap(%d,@ " i;
+     pp_heap_value ppf v;
+     Format.fprintf ppf ")@]"
+  | PushFunc i -> Format.fprintf ppf "PushFunc(%d)" i
+  | PushStack i -> Format.fprintf ppf "PushStack(%d)" i
+  | Push v ->
+     Format.fprintf ppf "@[<4>Push(";
+     pp_stack_value ppf v;
+     Format.fprintf ppf ")@]"
+  | Pop -> Format.fprintf ppf "Pop"
+  | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
+  | Call (args, return) -> Format.fprintf ppf "Call(%d, %d)" args return
+  | Return (locals, args) -> Format.fprintf ppf "Return(%d, %d)" locals args
+  | Jump block -> Format.fprintf ppf "Jump(%d)" block
+  | Bind id -> Format.fprintf ppf "Bind(%d)" id
+  | If (tblock, fblock) ->
+     Format.fprintf ppf "If(%d, %d)" tblock fblock
+and pp_inst_list ppf insts =
+  Format.fprintf ppf "@[<1>(";
+  Format.pp_print_list ~pp_sep:list_sep pp_inst ppf insts;
+  Format.fprintf ppf ")@]"
+
+(* Block map, function map and main function id *)
+type program =
+  { blocks: inst list array
+  ; funcs: (int * block) array
+  ; main: function_pointer
   }
-
-type program = closure array
-
-let print_inst out inst =
-  match inst with
-  | GetClosure i  -> Printf.fprintf out "\tGetClosure(%d)\n" i
-  | GetBuiltin n  -> Printf.fprintf out "\tGetBuiltin(%s)\n" n
-  | GetEnv i      -> Printf.fprintf out "\tGetEnv(%d)\n" i
-  | GetArg i      -> Printf.fprintf out "\tGetArg(%d)\n" i
-  | GetLocal i    -> Printf.fprintf out "\tGetLocal(%d)\n" i
-  | SetLocal i    -> Printf.fprintf out "\tSetLocal(%d)\n" i
-  | ConstInt i    -> Printf.fprintf out "\tConstInt(%d)\n" i
-  | Closure(i, n) -> Printf.fprintf out "\tClosure(%d, %d)\n" i n
-  | If(i, j)      -> Printf.fprintf out "\tIf(%d, %d)\n" i j
-  | Label(i, j)   -> Printf.fprintf out "\tLabel(%d, %d)\n" i j
-  | Jump(i, j)    -> Printf.fprintf out "\tJump(%d, %d)\n" i j
-  | BinOp op      -> Printf.fprintf out "\tBinOp(%s)\n" (Ops.string_of_bin_op op)
-  | UnaryOp op    -> Printf.fprintf out "\tUnaryOp(%s)\n" (Ops.string_of_unary_op op)
-  | Call          -> Printf.fprintf out "\tInvoke\n"
-  | Return        -> Printf.fprintf out "\tReturn\n"
-  | Pop           -> Printf.fprintf out "\tPop\n"
-
-let print_closure out {id; name; num_params; num_captures; num_locals; insts} =
-  Printf.fprintf out "%s#%d(%d, %d, %d):\n"
-    (match name with None -> "" | Some n -> n)
-    id
-    num_params
-    num_captures
-    num_locals;
-  Array.iter (print_inst out) insts
-
-let print_program out prog =
-  Array.iter (print_closure out) prog

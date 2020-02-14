@@ -12,13 +12,14 @@
 %token <int> INT
 %token <string> IDENT
 %token <string> IGNORE
+%token <string> TYPE
 %token TRUE FALSE
 %token INVERT
 %token PLUS MINUS
 %token EQUAL NEQUAL
 %token AND OR
 %token LPAREN RPAREN LBRACE RBRACE
-%token FUNC
+%token FUNC EXTERN
 %token IF ELSE
 %token WHILE CONTINUE BREAK
 %token RETURN
@@ -38,14 +39,10 @@ program:
   funcs = list(func) EOF { Array.of_list funcs }
 
 func:
-  | FUNC name = IDENT;
-    LPAREN params = separated_list(COMMA, named); RPAREN
-    body = func_body
-    { { name; params; body; loc = $startpos } }
-
-func_body:
-  | LBRACE statements RBRACE { Some($2) }
-  | SEMI { None }
+  | EXTERN IDENT LPAREN params = separated_list(COMMA, TYPE); RPAREN COLON return_ty = TYPE; SEMI
+    { { name = $2; loc = $startpos; rest = Extern (params, return_ty) } }
+  | FUNC IDENT; LPAREN params = separated_list(COMMA, named); RPAREN LBRACE body = statements; RBRACE
+    { { name = $2; loc = $startpos; rest = Definition (params, body) } }
 
 statements:
   | statement statements { $1 :: $2 }

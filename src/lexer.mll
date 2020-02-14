@@ -32,6 +32,7 @@ rule token = parse
   | "\\" { LAMBDA }
   | "->" { ARROW }
   | "func" { FUNC }
+  | "extern" { EXTERN }
   | "if" { IF }
   | "else" { ELSE }
   | "while" { WHILE }
@@ -41,11 +42,14 @@ rule token = parse
   | "<-" { BIND }
   | "true" { TRUE }
   | "false" { FALSE }
-  | ['a'-'z' 'A'-'Z'] ['a'-'z' 'A'-'Z' '_' '0'-'9']* {
+  | ['a'-'z'] ['a'-'z' 'A'-'Z' '_' '0'-'9']* {
       IDENT (Lexing.lexeme lexbuf)
     }
   | ['_'] ['a'-'z' 'A'-'Z' '_' '0'-'9']* {
       IGNORE (Lexing.lexeme lexbuf)
+    }
+  | ['A'-'Z'] ['a'-'z' 'A'-'Z']+ {
+      TYPE (Lexing.lexeme lexbuf)
     }
   | ['0' - '9']+ as str { INT(int_of_string str) }
   | _ as c {

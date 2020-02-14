@@ -8,22 +8,13 @@
 let compile = ref true
 let in_chan = ref stdin
 let out_chan = ref stdout
-let backend = ref Backend_x86_64.compile
 let interpreter = ref I0.interpret
 let debug = ref false
 
-let usage = "usage: " ^ Sys.argv.(0) ^ "[-o out] [-x86_64] input"
+let usage = "usage: " ^ Sys.argv.(0) ^ "[-o out] input"
 
 let speclist =
-  [ ( "-x86_64"
-    , Arg.Unit (fun () -> backend := Backend_x86_64.compile)
-    , ": x86_64 target"
-    )
-  ;  ( "-armv7"
-    , Arg.Unit (fun () -> backend := Backend_armv7.compile)
-    , ": armv7 target"
-    )
-  ; ( "-o"
+  [ ( "-o"
     , Arg.String (fun s -> out_chan := open_out s)
     , ": output stream"
     )
@@ -55,8 +46,8 @@ let () =
     let typed_ast = Typing.check ast in
     Analysis.analyse typed_ast;
     if !compile then
-      let ir = Ir_lowering.lower typed_ast in
-      !backend ir !out_chan !debug
+      let ir = Ir_lowering.lower !debug typed_ast in
+      Backend.compile !debug !out_chan ir
     else
       !interpreter !debug typed_ast
   with

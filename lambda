@@ -14,9 +14,6 @@ OPTIND=1
 # Find the directory where the script is located.
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-# Infer the host architecture.
-ARCH=$(uname -m)
-
 # Parse the arguments.
 OUTPUT=""
 INTERP_LEVEL=""
@@ -48,6 +45,12 @@ if test -n "$OUTPUT" && test -n "$INTERP_LEVEL"; then
     exit 9
 fi
 
+CC=${CC:-gcc}
+
+make release
+
+EXEC="$DIR/_build/install/default/bin/lambda"
+
 # Find the input file.
 INPUT=$(realpath "$1")
 if test -f "$INPUT"; then
@@ -55,30 +58,20 @@ if test -f "$INPUT"; then
   case "$OUTPUT" in
     "")
       # Dump assembly to stdout.
-        if ! (
-                cd "$DIR/src" || exit 1
-                dune exec ./main.exe -- $FLAGS -"$ARCH" "$INPUT"
-            ); then
+        if ! $EXEC $FLAGS "$INPUT"; then
             echo "Failed to compile."
             exit 1
         fi
       ;;
     *)
       # Create a temporary directory.
-      WORK_DIR=$(mktemp -d)
+      WORK_DIR=${WORKDIR:-$(mktemp -d)}
 
       # Compile and link.
       if ! (
-              if ! (
-                      cd "$DIR/src" || exit 1
-                      dune exec ./main.exe -- $FLAGS -"$ARCH" "$INPUT" -o "$WORK_DIR/lambda.S"
-                  ); then
-                  echo "Failed to compile."
-                  exit 1
-              fi
-
-              gcc -c asm/runtime_x86_64.S -o "$WORK_DIR/runtime.o"
-              gcc $FLAGS "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
+              $EXEC $FLAGS "$INPUT" -o "$WORK_DIR/lambda.S"
+              $CC -c runtime/runtime.c -o "$WORK_DIR/runtime.o"
+              $CC $FLAGS "$WORK_DIR/lambda.S" "$WORK_DIR/runtime.o" -o "$OUTPUT"
           ); then
           echo "Failed to build."
           exit 1

@@ -1,109 +1,113 @@
 (* Compiler Construction - Minimal Lambda Language *)
 
+open Ir
 open Typed_ast
 
-let lower program =
-  let next_func_id = ref 0 in
-  let new_func_id () = let id = !next_func_id in next_func_id := id + 1; id in
+module FuncMap = Map.Make(String)
 
-  (* Map function IDs to functions. *)
-  let funcs_by_id = Hashtbl.create 10 in
-  Array.iter
-    (Array.iter
-       (fun func -> Hashtbl.add funcs_by_id func.id (func, new_func_id ()))
-    )
-    program;
+type env =
+  { locals: int
+  ; args: int
+  }
 
-  (* Pass through each function, lowering all functions and closures. *)
-  let closures = ref [] in
+let builtins = FuncMap.of_seq (List.to_seq [ "print_int", 1 ; "print_bool", 1 ; "input_int", 0])
 
-  let lower_func func =
-    match func.body with
-    | None -> ()
-    | Some body ->
-       let next_label_id = ref 0 in
-       let new_label_id () = let id = !next_label_id in next_label_id := id + 1; id in
-       let rec lower_expr acc e =
-         match e with
-         | FuncExpr(_, id) ->
-            (* Decide whether the symbol is a function or a builtin. *)
-            let { body; name; _ }, closure_id = Hashtbl.find funcs_by_id id in
-            (match body with
-             | None ->
-                Ir.GetBuiltin name :: acc
-             | Some _ ->
-                Ir.GetClosure closure_id :: acc
-            )
-         | EnvExpr(_, id) ->
-            Ir.GetEnv id :: acc
-         | BoundExpr(_, id) ->
-            Ir.GetLocal id :: acc
-         | ArgExpr(_, id) ->
-            Ir.GetArg id :: acc
-         | IntExpr(_, i) ->
-            Ir.ConstInt i :: acc
-         | BoolExpr(_, b) ->
-            (if b then Ir.ConstInt 1 else Ir.ConstInt 0) :: acc
-         | BinExpr(_, op, lhs, rhs) ->
-            Ir.BinOp op :: lower_expr (lower_expr acc lhs) rhs
-         | UnaryExpr(_, op, expr) ->
-            Ir.UnaryOp op :: lower_expr acc expr
-         | LambdaExpr(_, num_params, env, body) ->
-            (* Create a new closure from the body. *)
-            let id = new_func_id() in
-            let ir_body = Ir.Return :: lower_expr [] body in
-            let num_captures = Array.length env in
-            let closure =
-              { Ir.id
-              ; Ir.name = None
-              ; Ir.num_params
-              ; Ir.num_captures
-              ; Ir.num_locals = 0
-              ; Ir.insts =  Array.of_list (List.rev ir_body)
-              }
-            in
-            closures := closure :: !closures;
-            (* Instantiate the closure with the captures. *)
-            Ir.Closure(id, num_captures) :: Array.fold_left lower_expr acc env
-         | CallExpr(_, callee, args) ->
-            Ir.Call :: lower_expr (Array.fold_left lower_expr acc args) callee
-       in
-       (* The return instruction, same across the function. *)
-       let rec lower_body acc stmts =
-         match stmts with
-         | ReturnStmt(_, e) :: rest ->
-            lower_body (Ir.Return :: lower_expr acc e) rest
-         | ExprStmt(_, e) :: rest ->
-            lower_body (Ir.Pop :: lower_expr acc e) rest
-         | BindStmt(_, id, e) :: rest ->
-            lower_body (Ir.SetLocal id :: lower_expr acc e) rest
-         | IfStmt(_, cond, first_block, second_block) :: rest ->
-            let _, id = Hashtbl.find funcs_by_id func.id in
-            let else_id = new_label_id() in
-            let end_id = new_label_id() in
-            let second_block' = Ir.Label(id, end_id) :: lower_body [] second_block in
-            let first_block' = Ir.Label(id, else_id)
-                               :: Ir.Jump(id, end_id)
-                               :: lower_body [] first_block in
-            let nested = second_block' @ first_block' @ (Ir.If(id, else_id) :: lower_expr acc cond) in
-            lower_body nested rest
-         | _ :: rest -> lower_body acc rest (* Cop-out *)
-         | [] ->
-            acc
-       in
-       let _, id = Hashtbl.find funcs_by_id func.id in
-       let insts = lower_body [] body in
-       let body = Ir.Return :: Ir.ConstInt 0 :: insts in
-       let closure =
-         { Ir.id
-         ; Ir.name = Some(func.name)
-         ; Ir.num_params = func.num_params
-         ; Ir.num_captures = 0
-         ; Ir.num_locals = func.num_locals
-         ; Ir.insts = Array.of_list (List.rev body)
-         }
-       in
-       closures := closure :: !closures
-  in
-  Array.iter (Array.iter lower_func) program;
-  Array.of_list (List.rev !closures)
+let rec cleanup directives cnt = match directives with
+  | [] -> cnt []
+  | Call (args, block) :: _ -> cnt [Call (args, block)]
+  | Return (locals, args) :: _ -> cnt [Return (locals, args)]
+  | Jump block :: _ -> cnt [Jump block]
+  | If (tblock, fblock) :: _ -> cnt [If (tblock, fblock)]
+  | x :: rest -> cleanup rest (fun rest' -> cnt (x :: rest'))
+
+let add_block, flatten_blocks, reserve_loop, get_loop, get_continue, set_loop =
+  let block_id = ref 0 in
+  let next_block () =
+    let block = !block_id in
+    incr block_id; block in
+  let blocks = ref BlockMap.empty in
+  let loops = ref BlockMap.empty in
+  let eval_add block =
+    let this_block = next_block () in
+    cleanup block (fun block' ->
+        blocks := BlockMap.add this_block block' !blocks;
+        this_block) in
+  let eval_flattens () = !blocks |> BlockMap.to_seq |> Seq.map snd |> Array.of_seq in
+  let reserve_loop id continue =
+    let this_block = next_block () in
+    loops := BlockMap.add id (this_block, continue) !loops in
+  let get_loop id = fst (BlockMap.find id !loops) in
+  let get_continue id = snd (BlockMap.find id !loops) in
+  let set_loop id block =
+    cleanup block (fun block' -> blocks := BlockMap.add (get_loop id) block' !blocks) in
+  eval_add, eval_flattens, reserve_loop, get_loop, get_continue, set_loop
+
+(* Stack is args, return address, locals, temp, ... *)
+(* Depth points to return address *)
+let rec flatten_expr env acc depth expr = match expr with
+  | FuncExpr (_, id) -> PushFunc id :: acc
+  | EnvExpr (_, id) -> PushStack (depth - id - 1) :: acc
+  | BoundExpr (_, id) -> PushStack (depth - id - 1) :: acc
+  | ArgExpr (_, id) -> PushStack (depth + env.args - id) :: acc
+  | IntExpr (_, i) -> Push (Int i) :: acc
+  | BoolExpr (_, b) -> Push (Bool b) :: acc
+  | BinExpr (_, op, lhs, rhs) ->
+     flatten_expr env (flatten_expr env (BinOp op :: acc) (depth + 1) rhs) depth lhs
+  | UnaryExpr (_, op, e) -> flatten_expr env (UnaryOp op :: acc) depth e
+  | LambdaExpr (_, params, captures, body) ->
+     let capturec = Array.length captures in
+     let env' = { locals = capturec; args = params } in
+     let body' = add_block (flatten_expr env' [Return (capturec, params)] capturec body) in
+     let acc' = AllocHeap (capturec, Func (Array.length captures, body')) :: acc in
+     let depth_acc = (depth + capturec - 1, acc') in
+     snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
+  | CallExpr (_, callee, args) ->
+     let return = add_block acc in
+     let argc = Array.length args in
+     let call' = Call (argc, return) in
+     let depth_acc = (depth + argc, [call']) in
+     let acc' = List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list args)) in
+     flatten_expr env (snd acc') depth callee
+and flatten_exprs env (depth, acc) expr = depth - 1, flatten_expr env acc depth expr
+
+let rec flatten_stmt env acc stmt =
+  let depth = env.locals in
+  match stmt with
+  | ReturnStmt (_, e) -> flatten_expr env (Return (env.locals, env.args) :: acc) depth e
+  | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
+  | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
+  | IfStmt (_, cond, tblock, fblock) ->
+     let continue = [Jump (add_block acc)] in
+     let acc' = [If (make_block env tblock continue, make_block env fblock continue)] in
+     flatten_expr env acc' depth cond
+  | WhileStmt (_, id, cond, lblock, eblock) ->
+     let continue = add_block acc in
+     reserve_loop id continue;
+     let lblock' = make_block env lblock [Jump (get_loop id)] in
+     let eblock' = make_block env eblock [Jump continue] in
+     set_loop id (flatten_expr env [If (lblock', eblock')] depth cond);
+     [Jump (get_loop id)]
+  | ContinueStmt (_, id) -> Jump (get_loop id) :: acc
+  | BreakStmt (_, id) -> Jump (get_continue id) :: acc
+and make_block env stmts acc =
+  add_block (List.fold_left (flatten_stmt env) acc (List.rev stmts))
+
+let lower_func _debug func =
+  if Option.is_none func.body then
+    if FuncMap.mem func.name builtins then
+      let params = FuncMap.find func.name builtins in
+      0, add_block [Builtin func.name; Return (0, params)]
+    else
+      failwith "built-in has no definition"
+  else
+    let locals, args = func.num_locals, func.num_params in
+    let env = { locals = locals; args = args } in
+    let block = make_block env (Option.get func.body) [Push Unit; Return (locals, args)] in
+    locals, block
+
+let lower debug program =
+  let program' = Array.concat (Array.to_list program) in
+  Array.sort (fun a b -> compare a.id b.id) program';
+  let funcs = Array.map (lower_func debug) program' in
+  let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
+  { blocks = flatten_blocks (); funcs = funcs; main = main.id }

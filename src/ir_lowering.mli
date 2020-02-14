@@ -1,3 +1,3 @@
 (* Compiler Construction - Minimal Lambda Language *)
 
-val lower : Typed_ast.program -> Ir.program
+val lower : bool -> Typed_ast.program -> Ir.program

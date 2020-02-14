@@ -1,5 +1,5 @@
-func print_int(x);
-func input_int();
+extern print_int(Int) : Unit;
+extern input_int() : Int;
 
 func sum(x, y, z) {
     return x + y + z;

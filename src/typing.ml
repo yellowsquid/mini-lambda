@@ -346,9 +346,59 @@ let rec check_statements ret_ty acc scope stats
          (nb, acc)
     in iter acc scope stats
 
+let check_func prog externs group_scope id =
+  let func = prog.(id) in
+  match func.rest with
+  | Extern _ ->
+     let _, (params, ret) = IdentMap.find func.name externs in
+     let new_func =
+       { Typed_ast.id
+       ; name = func.name
+       ; num_params = Array.length params
+       ; num_locals = 0
+       ; body = None
+       ; loc = func.loc
+       } in
+     TyArr (params, ret), new_func
+  | Definition (params, body) ->
+     (* Set up argument / return types. *)
+     let args =
+       List.fold_left (fun map name ->
+           IdentMap.add name (IdentMap.cardinal map, new_ty_var ()) map)
+         IdentMap.empty params in
+     let ret = new_ty_var () in
+     let label_scope = LabelScope (IdentMap.empty, None) in
+     let scope = label_scope :: FuncScope (args, ret) :: group_scope in
+
+     (* Recursively check the function. *)
+     let nb, body = check_statements ret (0, []) scope body in
+     let new_body, num_locals = List.rev body, nb in
+     let new_func =
+       { Typed_ast.id
+       ; name = func.name
+       ; num_params = IdentMap.cardinal args
+       ; num_locals
+       ; body = Some (new_body)
+       ; loc = func.loc
+       } in
+
+     let arg_types =
+       Array.init (List.length params)
+         (fun i -> snd (IdentMap.find (List.nth params i) args)) in
+
+     (* Construct a function type. *)
+     TyArr (arg_types, ret), new_func
+
+let check_extern types func = match func.rest with
+  | Definition _ -> failwith "not an extern"
+  | Extern (params, return) ->
+     let get_type name = match IdentMap.find_opt name types with
+       | Some ty -> ty
+       | None -> raise (Error (func.loc, Printf.sprintf "unknown type '%s'" name)) in
+     params |> List.map get_type |> Array.of_list, get_type return
+
 (* Finds the free variables in an expression. *)
-let rec find_refs_expr bound acc expr
-  = match expr with
+let rec find_refs_expr bound acc expr = match expr with
   | IdentExpr(loc, name) ->
      if List.mem name bound then acc else (loc, name) :: acc
   | IntExpr(_, _) ->
@@ -398,67 +448,53 @@ type dfs_info =
   ; mutable on_stack: bool
   }
 
-let check prog =
-  (* For each toplevel definition, collect the list of references. *)
-  let num_funcs = Array.length prog in
-  let name_table = Hashtbl.create num_funcs in
-  let references =
-    prog |>
-      Array.mapi
-        (fun i func ->
-          if Hashtbl.mem name_table func.name then
-            raise (Error(func.loc, "duplicate name"));
-          Hashtbl.add name_table func.name i;
-          match func.body with
-          | None ->
-             []
-          | Some body ->
-             find_refs_stat func.params body
-        )
-  in
+let get_references funcs externs i func =
+  if Hashtbl.mem funcs func.name || Hashtbl.mem externs func.name then
+    raise (Error (func.loc, "duplicate name"))
+  else match func.rest with
+       | Definition (params, body) ->
+          Hashtbl.add funcs func.name i;
+          find_refs_stat params body
+       | Extern _ ->
+          Hashtbl.add externs func.name i;
+          []
 
-  (* Build a directed graph of function-to-function references. *)
-  let graph =
-    Array.init num_funcs
-      (fun i ->
-        let refs = references.(i) in
-        Array.of_list
-          (refs |>
-             List.map
-               (fun (loc, ref_name) ->
-                 try Hashtbl.find name_table ref_name
-                 with Not_found -> raise (Error(loc, "undefined function"))
-          ))
-      )
-  in
+let graph funcs externs =
+  let get_id (loc, name) =
+    if Hashtbl.mem funcs name
+    then Hashtbl.find funcs name
+    else if Hashtbl.mem externs name
+    then Hashtbl.find externs name
+    else raise (Error (loc, "undefined function"))
+  in Array.map (List.map get_id)
 
-  (* Using the directed graph of references, find the strongly connected *)
-  (* components. Inside a component, i.e a recursive or mutually recursive *)
-  (* context, the type is not polymorphic. This is due to the fact that the *)
-  (* problem of inferring polymorphically recursive types is undecidable *)
-  let scc_info = Array.init num_funcs (fun _ ->
+(* Using the directed graph of references, find the strongly connected components.
+ * Inside a component, i.e a recursive or mutually recursive context, the type is not polymorphic.
+ * This is due to the fact that the problem of inferring polymorphically recursive types is
+ * undecidable *)
+let build_sccs graph =
+  let count = Array.length graph in
+  let scc_info = Array.init count (fun _ ->
                      { index = -1
                      ; link = -1
                      ; on_stack = false
-                   })
-  in
+                   }) in
   let dfs_stack = ref [] in
   let index = ref 0 in
   let sccs_rev = ref [] in
 
   let rec scc_dfs node_from =
     let idx = !index in
-    index := idx + 1;
+    incr index;
     scc_info.(node_from) <- { index = idx; link = idx; on_stack = true };
     dfs_stack := node_from :: !dfs_stack;
 
     let update_link node_to =
       let link = min scc_info.(node_from).link scc_info.(node_to).link in
-      scc_info.(node_from).link <- link
-    in
+      scc_info.(node_from).link <- link in
 
     graph.(node_from) |>
-      Array.iter (fun node_to ->
+      List.iter (fun node_to ->
           let { index = to_index; on_stack = to_on_stack; _ } = scc_info.(node_to) in
           if to_index < 0 then begin
               scc_dfs node_to;
@@ -477,102 +513,74 @@ let check prog =
              scc_info.(node).on_stack <- false;
              (node :: acc, rest)
           | [] ->
-             (acc, [])
-        in
+             (acc, []) in
         let (scc, stack) = build_component [] !dfs_stack in
         dfs_stack := stack;
         sccs_rev := Array.of_list scc :: !sccs_rev;
-      end
-  in
+      end in
 
-  for i = 0 to num_funcs - 1 do
+  for i = 0 to count - 1 do
     if scc_info.(i).index < 0 then scc_dfs i;
   done;
+  Array.of_list (List.rev !sccs_rev)
 
-  let sccs = Array.of_list (List.rev !sccs_rev) in
+let group_map prog base group =
+  Array.fold_left (fun scope id ->
+      if id >= 0 then
+        let { name; _ } = prog.(id) in
+        IdentMap.add name (id, new_ty_var ()) scope
+      else scope) base group
+
+let is_definition func = match func.rest with
+  | Extern _ -> false
+  | Definition _ -> true
+
+let check prog =
+  (* For each toplevel definition, collect the list of references. *)
+  let num_funcs = prog |> Array.to_list |> (List.filter is_definition) |> List.length in
+  let name_table = Hashtbl.create num_funcs in
+  let extern_table = Hashtbl.create (Array.length prog - num_funcs) in
+
+  let references = Array.mapi (get_references name_table extern_table) prog in
+
+  (* Build a directed graph of function-to-function references. *)
+  let graph = references |> graph name_table extern_table in
+  let sccs = build_sccs graph in
+
+  (* Type check all externs first *)
+  let types =
+    [("Int", TyInt); ("Bool", TyBool); ("Unit", TyUnit)] |> List.to_seq |> IdentMap.of_seq in
+  let externs =
+    extern_table
+    |> Hashtbl.to_seq
+    |> Seq.map (fun (name, id) -> name, (id, check_extern types prog.(id)))
+    |> IdentMap.of_seq in
 
   (* Typecheck each method group. Types are polymorphic only outside of SCCs. *)
   let typed_prog, _ =
-    Array.fold_left
-      (fun (typed_prog, root_scope) group ->
-        (* Create type vars for each function *)
-        let group_map =
-          Array.fold_left
-            (fun scope id ->
-              let { name; _ } = prog.(id) in
-              IdentMap.add name (id, new_ty_var ()) scope
-            ) IdentMap.empty group
-        in
-        let group_scope = GroupScope group_map :: [GlobalScope root_scope]
-        in
+    Array.fold_left (fun (typed_prog, root_scope) group ->
+        let group_map = group_map prog IdentMap.empty group in
+        let group_scope = [GroupScope group_map; GlobalScope root_scope] in
+
         (* Typecheck individual methods *)
-        let types =
-          Array.map
-            (fun id ->
-              let func = prog.(id) in
-              (* Set up argument / return types. *)
-              let args =
-                List.fold_left
-                  (fun map name ->
-                    IdentMap.add name (IdentMap.cardinal map, new_ty_var ()) map
-                  ) IdentMap.empty func.params
-              in
-              let ret = new_ty_var () in
-              let label_scope = LabelScope (IdentMap.empty, None) in
-              let scope = label_scope :: FuncScope (args, ret) :: group_scope in
-              (* Recursively check the function. *)
-              let new_body, num_locals =
-                (match func.body with
-                 | None ->
-                    None, 0
-                 | Some body ->
-                    let nb, body = check_statements ret (0, []) scope body in
-                    Some (List.rev body), nb
-                )
-              in
-              let new_func =
-                { Typed_ast.id
-                ; name = func.name
-                ; num_params = IdentMap.cardinal args
-                ; num_locals
-                ; body = new_body
-                ; loc = func.loc
-                }
-              in
-              let arg_types =
-                Array.init (List.length func.params)
-                  (fun i ->
-                    let _, ty = IdentMap.find (List.nth func.params i) args
-                    in ty
-                  )
-              in
-              (* Construct a function type. *)
-              (TyArr(arg_types, ret), new_func)
-            ) group
-        in
+        let types = Array.map (check_func prog externs group_scope) group in
 
         (* Unify the types with their tvars. *)
         let funcs =
-          Array.mapi
-            (fun i id ->
+          Array.mapi (fun i id ->
               let ty, func = types.(i) in
               let _, fn_ty = IdentMap.find (prog.(id).name) group_map in
-              unify func.Typed_ast.loc fn_ty ty;
-              func
-            ) group
-        in
+              unify func.Typed_ast.loc fn_ty ty; func)
+            group in
 
         (* Generalise the types. *)
         let new_root_scope =
-          Array.fold_left
-            (fun map id ->
+          Array.fold_left (fun map id ->
               let { name; _ } = prog.(id) in
               let _, fn_ty = IdentMap.find name group_map in
               let func_ty = generalise fn_ty in
-              IdentMap.add name (id, func_ty) map
-            ) root_scope group
-        in
-        (funcs :: typed_prog, new_root_scope)
-      ) ([], IdentMap.empty) sccs
-  in
+              IdentMap.add name (id, func_ty) map)
+            root_scope group in
+        (funcs :: typed_prog, new_root_scope))
+      ([], IdentMap.map (fun (id, (params, ret)) -> id, TyArr(params, ret)) externs) sccs in
   Array.of_list (List.rev typed_prog)

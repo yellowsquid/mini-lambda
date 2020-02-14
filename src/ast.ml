@@ -27,11 +27,10 @@ type statement
   | ContinueStmt of loc * string option
   | BreakStmt of loc * string option
 
-type func =
-  { name: string
-  ; params: string list
-  ; body: (statement list) option
-  ; loc: loc
-  }
+type func_type
+  = Extern of string list * string
+  | Definition of string list * statement list
+
+type func = { name: string; loc: loc; rest: func_type }
 
 type program = func array

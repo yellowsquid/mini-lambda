@@ -1,0 +1,12 @@
+opam-version: "2.0"
+version: "1.0"
+synopsis: "Compiler for the Lambda mini language"
+maintainer: "greg.brown.00@outlook.com"
+authors: ["Greg Brown"]
+bug-reports: "https://git.yellowsquid.uk/yellowsquid/mini-lambda/issues"
+homepage: "https://git.yellowsquid.uk/yellowsquid/mini-lambda"
+dev-repo: "git+https://git.yellowsquid.uk/yellowsquid/mini-lambda"
+license: "MIT"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
