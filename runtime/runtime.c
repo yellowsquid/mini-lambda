@@ -3,7 +3,7 @@
 
 #include "lambda.h"
 
-#define HEAP_SIZE 1024
+#define HEAP_SIZE 8192
 
 long used = 0;
 long capacity = 0;
@@ -43,7 +43,7 @@ pointer_t lambda_alloc(pointer_t heap, long size) {
   if (size + used > capacity) {
     exit(2);
   } else {
-    pointer_t out = &heap[used];
+    pointer_t out = &(heap[used]);
     used += size;
     return out;
   }

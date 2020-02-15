@@ -57,8 +57,9 @@ let rec flatten_expr env acc depth expr = match expr with
   | LambdaExpr (_, params, captures, body) ->
      let capturec = Array.length captures in
      let env' = { locals = capturec; args = params } in
-     let body' = add_block (flatten_expr env' [Return (capturec, params)] capturec body) in
-     let acc' = AllocHeap (capturec, Func (Array.length captures, body')) :: acc in
+     let body' = flatten_expr env' [Return (capturec, params)] capturec body in
+     let block = add_block (CopyLocals (capturec, params) :: body') in
+     let acc' = AllocHeap (capturec, Func (Array.length captures, block)) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
      snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
   | CallExpr (_, callee, args) ->
@@ -78,19 +79,21 @@ let rec flatten_stmt env acc stmt =
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
-     let acc' = [If (make_block env tblock continue, make_block env fblock continue)] in
+     let tblock' = add_block (make_block env tblock continue) in
+     let fblock' = add_block (make_block env fblock continue) in
+     let acc' = [If (tblock', fblock')] in
      flatten_expr env acc' depth cond
   | WhileStmt (_, id, cond, lblock, eblock) ->
      let continue = add_block acc in
      reserve_loop id continue;
-     let lblock' = make_block env lblock [Jump (get_loop id)] in
-     let eblock' = make_block env eblock [Jump continue] in
+     let lblock' = add_block (make_block env lblock [Jump (get_loop id)]) in
+     let eblock' = add_block (make_block env eblock [Jump continue]) in
      set_loop id (flatten_expr env [If (lblock', eblock')] depth cond);
      [Jump (get_loop id)]
   | ContinueStmt (_, id) -> Jump (get_loop id) :: acc
   | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block env stmts acc =
-  add_block (List.fold_left (flatten_stmt env) acc (List.rev stmts))
+  List.fold_left (flatten_stmt env) acc (List.rev stmts)
 
 let lower_func _debug func =
   if Option.is_none func.body then
@@ -103,7 +106,8 @@ let lower_func _debug func =
     let locals, args = func.num_locals, func.num_params in
     let env = { locals = locals; args = args } in
     let block = make_block env (Option.get func.body) [Push Unit; Return (locals, args)] in
-    locals, block
+    let block' = add_block (CopyLocals (locals, args) :: block) in
+    locals, block'
 
 let lower debug program =
   let program' = Array.concat (Array.to_list program) in

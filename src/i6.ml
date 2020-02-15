@@ -26,6 +26,8 @@ type directive
   (* Allocates space and pushes to heap. *)
   (* Parts are stack elements to move and heap value *)
   | AllocHeap of int * heap_value
+  (* Copies local values from heap onto stack. *)
+  | CopyLocals of env
   (* Pushes function *)
   | PushFunc of int
   (* Pushes stack value, relative to top *)
@@ -89,6 +91,7 @@ let pp_heap_value_list ppf values =
 let rec pp_directive ppf directive = match directive with
   | BinOp op -> Format.fprintf ppf "BinOp(%s)" (string_of_bin_op op)
   | UnaryOp op -> Format.fprintf ppf "UnaryOp(%s)" (string_of_unary_op op)
+  | CopyLocals env -> Format.fprintf ppf "CopyLocals(%d, %d)" env.locals env.args
   | AllocHeap (i, v) ->
      Format.fprintf ppf "@[<4>AllocHeap(%d,@ " i;
      pp_heap_value ppf v;
@@ -185,7 +188,7 @@ let rec flatten_expr env acc depth expr = match expr with
   | LambdaExpr (_, params, captures, body) ->
      let capturec = Array.length captures in
      let env' = { locals = capturec; args = params } in
-     let body' = add_block (flatten_expr env' [Return env'] capturec body) in
+     let body' = add_block (CopyLocals env' :: flatten_expr env' [Return env'] capturec body) in
      let acc' = AllocHeap (capturec, Func (Array.length captures, body')) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
      snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
@@ -206,19 +209,21 @@ let rec flatten_stmt env acc stmt =
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
-     let acc' = [If (make_block env tblock continue, make_block env fblock continue)] in
+     let tblock' = add_block (make_block env tblock continue) in
+     let fblock' = add_block (make_block env fblock continue) in
+     let acc' = [If (tblock', fblock')] in
      flatten_expr env acc' depth cond
   | WhileStmt (_, id, cond, lblock, eblock) ->
      let continue = add_block acc in
      reserve_loop id continue;
-     let lblock' = make_block env lblock [Jump (get_loop id)] in
-     let eblock' = make_block env eblock [Jump continue] in
+     let lblock' = add_block (make_block env lblock [Jump (get_loop id)]) in
+     let eblock' = add_block (make_block env eblock [Jump continue]) in
      set_loop id (flatten_expr env [If (lblock', eblock')] depth cond);
      [Jump (get_loop id)]
   | ContinueStmt (_, id) -> Jump (get_loop id) :: acc
   | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block env stmts acc =
-  add_block (List.fold_left (flatten_stmt env) acc (List.rev stmts))
+  List.fold_left (flatten_stmt env) acc (List.rev stmts)
 
 let rec sublist base count list =
   if count = 0
@@ -249,9 +254,8 @@ let step directives values heap = match directives, values with
      (match !(List.nth values args) with
       | HeapIndex i ->
       (match !(List.nth heap i) with
-       | Func (locals, body) ->
-          let locals' = unwrap (i + 1) locals heap in
-          get_block body, locals' @ (ref (CodeIndex return) :: values), heap
+       | Func (_, body) ->
+          get_block body, ref (CodeIndex return) :: values, heap
        | _ -> failwith "runtime error: heap item not function")
       | _ -> failwith "runtime error: callee not on heap")
   | [Return env], value :: values' ->
@@ -271,6 +275,13 @@ let step directives values heap = match directives, values with
      let out = List.length heap in
      let data, values' = split ncopy values in
      rest, ref (HeapIndex out) :: values', heap @ (ref value :: wrap data)
+
+  | CopyLocals env :: rest, _ ->
+     (match !(List.nth values (env.args + 1)) with
+      | HeapIndex i ->
+         let locals' = unwrap (i + 1) env.locals heap in
+         rest, locals' @ values, heap
+      | _ -> failwith "runtime error: callee not on heap")
 
   | PushFunc id :: rest, _ ->
      rest, ref (HeapIndex (Array.get !funcs id)) :: values, heap
@@ -316,7 +327,8 @@ let interpret_func func =
   else
     let env = { locals = func.num_locals; args = func.num_params } in
     let block = make_block env (Option.get func.body) [Push Unit; Return env] in
-    func.num_locals, block
+    let block' = add_block (CopyLocals env :: block) in
+    func.num_locals, block'
 
 let heapify_func heap (locals, block) =
   let out = List.length !heap in
@@ -331,8 +343,8 @@ let interpret debug program =
   let heap = ref [] in
   funcs := Array.map (heapify_func heap) raw_funcs;
   let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
-  let locals, body =  Array.get raw_funcs main.id in
-  let stack = List.init locals (fun _ -> ref Unit) @ [ref (CodeIndex 0); ref Unit] in
-  (match driver debug stack (get_block body) !heap with
-   | [{ contents = Unit }] -> ()
-   | _ -> failwith "type mismatch")
+  let main_ptr = Array.get !funcs main.id in
+  let stack = [ref (CodeIndex 0); ref (HeapIndex main_ptr)] in
+  match driver debug stack (get_block (snd (Array.get raw_funcs main.id))) !heap with
+  | [{ contents = Unit }] -> ()
+  | _ -> failwith "runtime error: didn't return unit"

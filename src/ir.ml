@@ -43,6 +43,9 @@ type inst
   (* Allocate space on the heap, push value to heap, then shift items from stack top.
    * Pushes heap pointer *)
   | AllocHeap of int * heap_value
+  (* Copy local variables from the heap onto the stack.
+   * Parameters are number of locals then number of args. *)
+  | CopyLocals of int * int
   (* Pushes a function pointer to the stack. *)
   | PushFunc of function_pointer
   (* Pushes a value from lower on the stack to the top. The value is copied. *)
@@ -99,6 +102,7 @@ let rec pp_inst ppf inst = match inst with
      Format.fprintf ppf "@[<4>AllocHeap(%d,@ " i;
      pp_heap_value ppf v;
      Format.fprintf ppf ")@]"
+  | CopyLocals (locals, args) -> Format.fprintf ppf "CopyLocals(%d, %d)" locals args
   | PushFunc i -> Format.fprintf ppf "PushFunc(%d)" i
   | PushStack i -> Format.fprintf ppf "PushStack(%d)" i
   | Push v ->

@@ -25,7 +25,7 @@ release: $(OUT)
 	dune build
 
 $(OUT): $(SRC_DEPS)
-	(cd src && dune build)
+	(cd src && dune build lambda.exe)
 
 dev: $(OUT)
 	dune build @install
@@ -48,7 +48,7 @@ dev-switch:
 test: $(OUT)
 	dune runtest
 
-fulltest: $(OUT)
+fulltest: release
 	$(MAKE) -C full-test
 
 check: $(OUT)

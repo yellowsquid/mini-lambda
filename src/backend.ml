@@ -29,10 +29,10 @@ let compile_block debug out id insts =
           | And -> Printf.fprintf out "\tandq %%rcx, (%%rsp) # And rhs with left\n"
           | Or -> Printf.fprintf out "\torq %%rcx, (%%rsp) # Or rhs with left\n"
           | Equal ->
+             Printf.fprintf out "\txorq %%rax, %%rax # Set rax to 0\n";
              Printf.fprintf out "\tcmpq %%rcx, (%%rsp) # Compare rhs with left\n";
-             Printf.fprintf out "\txorq %%rcx, %%rcx # Set rcx to 0\n";
-             Printf.fprintf out "\tsete %%al # Set to 1 if equal\n";
-             Printf.fprintf out "\tmovq %%rcx, (%%rsp) # Push to stack\n")
+             Printf.fprintf out "\tsete %%al # Set rax to 1 if equal\n";
+             Printf.fprintf out "\tmovq %%rax, (%%rsp) # Push to stack\n")
       | UnaryOp Invert -> Printf.fprintf out "\txorq $1, (%%rsp) # Invert stack top\n"
       | AllocHeap (stacked, Func (locals, block)) when stacked = locals ->
          Printf.fprintf out "\tmovq %%rsp, %%rbx # Save stack pointer\n";
@@ -46,16 +46,26 @@ let compile_block debug out id insts =
          Printf.fprintf out "\tmovq %%rcx, 8(%%rax) # Move return address to heap\n";
          Printf.fprintf out "\tmovq %%rbx, %%rsp # Restore stack pointer\n";
          let rec capture n =
-           if n = 0 then ()
+           if n = locals then ()
            else begin
-               Printf.fprintf out "\tmovq -%d(%%rsp), %%rcx # Move stack item to rcx\n" (8 * n);
+               Printf.fprintf out "\tmovq %d(%%rsp), %%rcx # Move stack item to rcx\n" (8 * n);
                Printf.fprintf out "\tmovq %%rcx, %d(%%rax) # Move rcx to heap item\n" (8 * n + 16);
-               capture (n - 1)
+               capture (n + 1)
              end in
-         capture locals;
+         capture 0;
          Printf.fprintf out "\taddq $%d, %%rsp # Readjust stack pointer\n" (8 * locals);
          Printf.fprintf out "\tpushq %%rax # Push heap position to stack\n"
       | AllocHeap _ -> failwith "invalid alloc heap"
+      | CopyLocals (locals, args) ->
+         Printf.fprintf out "\tmovq %d(%%rsp), %%rcx # Copy closure location\n" (8 * args + 8);
+         let base = (8 * locals + 8) in
+         let rec copy n =
+           if n = locals then ()
+           else begin
+               Printf.fprintf out "\tpushq %d(%%rcx) # Push from heap to stack\n" (base - 8 * n);
+               copy (n + 1)
+             end in
+         copy 0
       | PushFunc id ->
          Printf.fprintf out "\tleaq _function_%d(%%rip), %%rcx # Get address of function\n" id;
          Printf.fprintf out "\tpushq %%rcx # Push it onto stack\n"
@@ -81,7 +91,6 @@ let compile_block debug out id insts =
          Printf.fprintf out "\tmovq %d(%%rsp), %%rax # Copy closure location\n" (8 * args);
          Printf.fprintf out "\tleaq _block_%d(%%rip), %%rcx # Load return address\n" return;
          Printf.fprintf out "\tpushq %%rcx # Push return address\n";
-         Printf.fprintf out "\t# TODO move locals onto stack\n";
          Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n"
       | Return (locals, args) ->
          Printf.fprintf out "\tpopq %%rcx # Pop return value\n";
@@ -117,13 +126,12 @@ let compile debug out program =
   Printf.fprintf out ".text\n";
   Printf.fprintf out ".global lambda_main\n";
   Printf.fprintf out "lambda_main:\n";
-  Printf.fprintf out "\tpushq %%r12 # Callee saves \n";
-  Printf.fprintf out "\tmovq %%rdx, %%r12 # Save heap location\n";
+  Printf.fprintf out "\tpushq %%r12 # Callee saves\n";
+  Printf.fprintf out "\tmovq %%rdi, %%r12 # Save heap location\n";
   Printf.fprintf out "\tleaq _function_%d(%%rip), %%rax # Get main function location\n" program.main;
   Printf.fprintf out "\tpushq %%rax # Push main function onto the stack\n";
   Printf.fprintf out "\tleaq _lambda_end(%%rip), %%rcx # Load return address\n";
   Printf.fprintf out "\tpushq %%rcx # Push return address\n";
-  Printf.fprintf out "\t# TODO move locals onto stack\n";
   Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n";
   Printf.fprintf out ".text\n";
   Printf.fprintf out "_lambda_end:\n";
