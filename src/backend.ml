@@ -56,6 +56,9 @@ let compile_block debug out id insts =
          Printf.fprintf out "\taddq $%d, %%rsp # Readjust stack pointer\n" (8 * locals);
          Printf.fprintf out "\tpushq %%rax # Push heap position to stack\n"
       | AllocHeap _ -> failwith "invalid alloc heap"
+      | AllocStack locals ->
+         if locals > 0 then
+           Printf.fprintf out "\tsubq $%d, %%rsp # Allocate space on stack\n" (8 * locals)
       | CopyLocals (locals, args) ->
          Printf.fprintf out "\tmovq %d(%%rsp), %%rcx # Copy closure location\n" (8 * args + 8);
          let base = (8 * locals + 8) in
@@ -94,10 +97,12 @@ let compile_block debug out id insts =
          Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n"
       | Return (locals, args) ->
          Printf.fprintf out "\tpopq %%rcx # Pop return value\n";
-         Printf.fprintf out "\taddq $%d, %%rsp # Pop locals\n" (8 * locals);
+         if locals > 0 then
+           Printf.fprintf out "\taddq $%d, %%rsp # Pop locals\n" (8 * locals);
          Printf.fprintf out "\tpopq %%rax # Pop return address\n";
-         Printf.fprintf out "\taddq $%d, %%rsp # Pop args and callee\n" (8 + 8 * args);
-         Printf.fprintf out "\tpushq %%rcx # Push return value\n";
+         if args > 0 then
+           Printf.fprintf out "\taddq $%d, %%rsp # Pop args\n" (8 * args);
+         Printf.fprintf out "\tmovq %%rcx, (%%rsp) # Push return value\n";
          Printf.fprintf out "\tjmp *%%rax # Jump to return address\n"
       | Jump block -> Printf.fprintf out "\tjmp _block_%d # Jump to block\n" block
       | If (tblock, fblock) ->
@@ -107,22 +112,15 @@ let compile_block debug out id insts =
          Printf.fprintf out "\tjne _block_%d # Jump for false\n" fblock
     ) insts
 
-let compile_function _debug out id (locals, block) =
+let compile_function _debug out id (name, block) =
   Printf.fprintf out ".data\n";
+  Printf.fprintf out ".global _lambda_%s\n" name;
+  Printf.fprintf out "_lambda_%s:\n" name;
   Printf.fprintf out "_function_%d:\n" id;
-  Printf.fprintf out "\t.quad %d\n" locals;
-  Printf.fprintf out "\t.quad _block_%d\n" block;
-
-  let rec print_locals n =
-    if n = 0 then ()
-    else begin
-        Printf.fprintf out "\t.quad 0\n";
-        print_locals (n - 1) end in
-  print_locals locals
+  Printf.fprintf out "\t.quad %d\n" 0;
+  Printf.fprintf out "\t.quad _block_%d\n" block
 
 let compile debug out program =
-  Array.iteri (compile_block debug out) program.blocks;
-  Array.iteri (compile_function debug out) program.funcs;
   Printf.fprintf out ".text\n";
   Printf.fprintf out ".global lambda_main\n";
   Printf.fprintf out "lambda_main:\n";
@@ -130,11 +128,13 @@ let compile debug out program =
   Printf.fprintf out "\tmovq %%rdi, %%r12 # Save heap location\n";
   Printf.fprintf out "\tleaq _function_%d(%%rip), %%rax # Get main function location\n" program.main;
   Printf.fprintf out "\tpushq %%rax # Push main function onto the stack\n";
-  Printf.fprintf out "\tleaq _lambda_end(%%rip), %%rcx # Load return address\n";
+  Printf.fprintf out "\tleaq lambda_end(%%rip), %%rcx # Load return address\n";
   Printf.fprintf out "\tpushq %%rcx # Push return address\n";
   Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n";
   Printf.fprintf out ".text\n";
-  Printf.fprintf out "_lambda_end:\n";
+  Printf.fprintf out "lambda_end:\n";
   Printf.fprintf out "\tpopq %%rax # Move return value into register\n";
   Printf.fprintf out "\tpopq %%r12 # Restore parent r12\n";
-  Printf.fprintf out "\tret # Quit lambda land\n"
+  Printf.fprintf out "\tret # Quit lambda land\n";
+  Array.iteri (compile_block debug out) program.blocks;
+  Array.iteri (compile_function debug out) program.funcs

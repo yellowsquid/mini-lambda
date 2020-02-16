@@ -58,7 +58,10 @@ let rec flatten_expr env acc depth expr = match expr with
      let capturec = Array.length captures in
      let env' = { locals = capturec; args = params } in
      let body' = flatten_expr env' [Return (capturec, params)] capturec body in
-     let block = add_block (CopyLocals (capturec, params) :: body') in
+     let body'' = if capturec > 0
+                  then CopyLocals (capturec, params) :: body'
+                  else body' in
+     let block = add_block body'' in
      let acc' = AllocHeap (capturec, Func (Array.length captures, block)) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
      snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
@@ -99,15 +102,15 @@ let lower_func _debug func =
   if Option.is_none func.body then
     if FuncMap.mem func.name builtins then
       let params = FuncMap.find func.name builtins in
-      0, add_block [Builtin func.name; Return (0, params)]
+      func.name, add_block [Builtin func.name; Return (0, params)]
     else
       failwith "built-in has no definition"
   else
     let locals, args = func.num_locals, func.num_params in
     let env = { locals = locals; args = args } in
     let block = make_block env (Option.get func.body) [Push Unit; Return (locals, args)] in
-    let block' = add_block (CopyLocals (locals, args) :: block) in
-    locals, block'
+    let block' = add_block (AllocStack locals :: block) in
+    func.name, block'
 
 let lower debug program =
   let program' = Array.concat (Array.to_list program) in

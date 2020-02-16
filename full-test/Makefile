@@ -1,5 +1,4 @@
-TARGETS := add after-return capture cp early-return equal factorial fibb full if ignore \
-	mutual-recursion print rebind sub while
+TARGETS := $(wildcard *)
 
 CASES := $(foreach dir,$(TARGETS),$(wildcard $(dir)/*.out))
 
