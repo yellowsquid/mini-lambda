@@ -6,7 +6,7 @@ func sum(x, y, z) {
 }
 
 func adder(x) {
-    return \(y) -> (\(z) -> sum(x, y, z));
+    return |y| -> (|z| -> sum(x, y, z));
 }
 
 func main() {

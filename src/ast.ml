@@ -27,10 +27,16 @@ type statement
   | ContinueStmt of loc * string option
   | BreakStmt of loc * string option
 
+type ty = { loc: loc; base: string; params: ty list }
+
 type func_type
-  = Extern of string list * string
+  = Extern of ty list * ty
   | Definition of string list * statement list
 
-type func = { name: string; loc: loc; rest: func_type }
+type func = { loc: loc; func_name: string; rest: func_type }
 
-type program = func array
+type constructor = { loc: loc; const_name: string; params: ty list }
+
+type ty_decl = { loc: loc; ty_name: string; generics: string list; consts: constructor list }
+
+type program = { tys: ty_decl array; funcs: func array }

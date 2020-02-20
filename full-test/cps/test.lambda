@@ -6,7 +6,7 @@ func fib(n, c) {
     } else if n == 1 {
         return c(1);
     } else {
-        return fib(n - 1, \(a) -> fib(n - 2, \(b) -> c(a + b)));
+        return fib(n - 1, |a| -> fib(n - 2, |b| -> c(a + b)));
     }
 }
 

@@ -18,11 +18,11 @@ func fibb(n) {
 
 func iter(current, limit, f) {
     if current != limit {
-       f(current);
-       iter(current + 1, limit, f);
+        f(current);
+        iter(current + 1, limit, f);
     }
 }
 
 func main() {
-    iter(0, 10, \(x) -> print_int(fibb(x)));
+    iter(0, 10, |x| -> print_int(fibb(x)));
 }

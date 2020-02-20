@@ -29,8 +29,11 @@ rule token = parse
   | ',' { COMMA }
   | ';' { SEMI }
   | ':' { COLON }
-  | "\\" { LAMBDA }
+  | '|' { PIPE }
   | "->" { ARROW }
+  | '<' { LANGLE }
+  | '>' { RANGLE }
+  | "enum" { ENUM }
   | "func" { FUNC }
   | "extern" { EXTERN }
   | "if" { IF }
@@ -48,7 +51,7 @@ rule token = parse
   | ['_'] ['a'-'z' 'A'-'Z' '_' '0'-'9']* {
       IGNORE (Lexing.lexeme lexbuf)
     }
-  | ['A'-'Z'] ['a'-'z' 'A'-'Z']+ {
+  | ['A'-'Z'] ['a'-'z' 'A'-'Z']* {
       TYPE (Lexing.lexeme lexbuf)
     }
   | ['0' - '9']+ as str { INT(int_of_string str) }

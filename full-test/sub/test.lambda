@@ -6,7 +6,7 @@ func dif(x, y) {
 }
 
 func subber(x) {
-	return \(y) -> dif(x, y);
+	return |y| -> dif(x, y);
 }
 
 func main() {

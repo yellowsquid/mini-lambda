@@ -5,5 +5,5 @@ func other(_ignored) {
 func main() {
     _x <- 3 + 4;
     _x <- other(3);
-    _x <- \(x) -> (x + 3);
+    _x <- |x| -> (x + 3);
 }

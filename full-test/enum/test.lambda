@@ -1,0 +1,78 @@
+enum List<T> {
+    Nil;
+    Cons(T, List<T>);
+}
+
+enum Option<T> {
+    Some(T);
+    None;
+}
+
+enum Result<V, E> {
+    Ok(V);
+    Err(E);
+}
+
+extern print_int(Int) : Unit;
+extern print_bool(Bool) : Unit;
+
+func print_if_some(print, option) {
+    match option {
+        None -> return;
+        Some(v) -> print(v);
+    }
+}
+
+func print_result(print_ok, print_err, result) {
+    match result {
+        Ok(b) -> print_ok(b);
+        Err(e) -> print_err(e);
+    }
+}
+
+func transmute_option(option) {
+    match option {
+        Some(Ok(v)) -> return Ok(Some(v));
+        Some(Err(e)) -> return Err(e);
+        None -> return Ok(None);
+    }
+}
+
+func transmute_result(result) {
+    match result {
+        Ok(Some(v)) -> return Some(Ok(v));
+        Ok(None) -> return None;
+        Err(e) -> return Some(Err(e));
+    }
+}
+
+func print_list(print, list) {
+    rest <- list;
+
+    while true {
+        match rest {
+            Nil -> break;
+            Cons(t, rest) -> {
+                print(t);
+                rest <- list;
+            }
+        }
+    }
+}
+
+func main() {
+    list <- Cons(1, Cons(2, Cons(3, Nil)));
+    print_list(print_int, list);
+
+    print_result_option <- |v| -> print_result(print_bool, print_int, v);
+    option <- Some(Ok(true));
+    err_option <- Some(Err(3));
+
+    print_if_some(print_result_option, option);
+    print_if_some(print_result_option, err_option);
+    print_if_some(print_result_option, None);
+
+    print_result(|v| -> print_if_some(print_bool, v), print_int, transmute_option(option));
+    print_result(|v| -> print_if_some(print_bool, v), print_int, transmute_option(err_option));
+    print_bool(option == transmute_result(transmute_option(option)));
+}

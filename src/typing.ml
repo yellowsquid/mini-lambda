@@ -350,10 +350,10 @@ let check_func prog externs group_scope id =
   let func = prog.(id) in
   match func.rest with
   | Extern _ ->
-     let _, (params, ret) = IdentMap.find func.name externs in
+     let _, (params, ret) = IdentMap.find func.func_name externs in
      let new_func =
        { Typed_ast.id
-       ; name = func.name
+       ; name = func.func_name
        ; num_params = Array.length params
        ; num_locals = 0
        ; body = None
@@ -375,7 +375,7 @@ let check_func prog externs group_scope id =
      let new_body, num_locals = List.rev body, nb in
      let new_func =
        { Typed_ast.id
-       ; name = func.name
+       ; name = func.func_name
        ; num_params = IdentMap.cardinal args
        ; num_locals
        ; body = Some (new_body)
@@ -389,13 +389,17 @@ let check_func prog externs group_scope id =
      (* Construct a function type. *)
      TyArr (arg_types, ret), new_func
 
+let rec get_type types ty =
+  match IdentMap.find_opt ty.base types with
+  | Some prod ->
+     let params' = List.map (get_type types) ty.params in
+     prod ty.loc params'
+  | None -> raise (Error (ty.loc, Printf.sprintf "unknown type '%s'" ty.base))
+
 let check_extern types func = match func.rest with
   | Definition _ -> failwith "not an extern"
   | Extern (params, return) ->
-     let get_type name = match IdentMap.find_opt name types with
-       | Some ty -> ty
-       | None -> raise (Error (func.loc, Printf.sprintf "unknown type '%s'" name)) in
-     params |> List.map get_type |> Array.of_list, get_type return
+     params |> List.map (get_type types) |> Array.of_list, get_type types return
 
 (* Finds the free variables in an expression. *)
 let rec find_refs_expr bound acc expr = match expr with
@@ -449,14 +453,14 @@ type dfs_info =
   }
 
 let get_references funcs externs i func =
-  if Hashtbl.mem funcs func.name || Hashtbl.mem externs func.name then
+  if Hashtbl.mem funcs func.func_name || Hashtbl.mem externs func.func_name then
     raise (Error (func.loc, "duplicate name"))
   else match func.rest with
        | Definition (params, body) ->
-          Hashtbl.add funcs func.name i;
+          Hashtbl.add funcs func.func_name i;
           find_refs_stat params body
        | Extern _ ->
-          Hashtbl.add externs func.name i;
+          Hashtbl.add externs func.func_name i;
           []
 
 let graph funcs externs =
@@ -527,60 +531,66 @@ let build_sccs graph =
 let group_map prog base group =
   Array.fold_left (fun scope id ->
       if id >= 0 then
-        let { name; _ } = prog.(id) in
-        IdentMap.add name (id, new_ty_var ()) scope
+        let { func_name; _ } = prog.(id) in
+        IdentMap.add func_name (id, new_ty_var ()) scope
       else scope) base group
 
 let is_definition func = match func.rest with
   | Extern _ -> false
   | Definition _ -> true
 
-let check prog =
-  (* For each toplevel definition, collect the list of references. *)
-  let num_funcs = prog |> Array.to_list |> (List.filter is_definition) |> List.length in
-  let name_table = Hashtbl.create num_funcs in
-  let extern_table = Hashtbl.create (Array.length prog - num_funcs) in
+let base_types =
+  [ ("Int", fun loc x ->
+            match x with | [] -> TyInt | _ -> raise (Error (loc, "Int has no generic parameters")))
+  ; ("Bool", fun loc x ->
+             match x with [] -> TyBool | _ -> raise (Error (loc, "Bool has no generic parameters")))
+  ; ("Unit", fun loc x ->
+             match x with [] -> TyUnit | _ -> raise (Error (loc, "Unit has no generic parameters")))
+  ] |> List.to_seq |> IdentMap.of_seq
 
-  let references = Array.mapi (get_references name_table extern_table) prog in
+let check { funcs; _ } =
+  (* For each toplevel definition, collect the list of references. *)
+  let num_funcs = funcs |> Array.to_list |> (List.filter is_definition) |> List.length in
+  let name_table = Hashtbl.create num_funcs in
+  let extern_table = Hashtbl.create (Array.length funcs - num_funcs) in
+
+  let references = Array.mapi (get_references name_table extern_table) funcs in
 
   (* Build a directed graph of function-to-function references. *)
   let graph = references |> graph name_table extern_table in
   let sccs = build_sccs graph in
 
   (* Type check all externs first *)
-  let types =
-    [("Int", TyInt); ("Bool", TyBool); ("Unit", TyUnit)] |> List.to_seq |> IdentMap.of_seq in
   let externs =
     extern_table
     |> Hashtbl.to_seq
-    |> Seq.map (fun (name, id) -> name, (id, check_extern types prog.(id)))
+    |> Seq.map (fun (name, id) -> name, (id, check_extern base_types funcs.(id)))
     |> IdentMap.of_seq in
 
   (* Typecheck each method group. Types are polymorphic only outside of SCCs. *)
   let typed_prog, _ =
     Array.fold_left (fun (typed_prog, root_scope) group ->
-        let group_map = group_map prog IdentMap.empty group in
+        let group_map = group_map funcs IdentMap.empty group in
         let group_scope = [GroupScope group_map; GlobalScope root_scope] in
-
         (* Typecheck individual methods *)
-        let types = Array.map (check_func prog externs group_scope) group in
+        let types = Array.map (check_func funcs externs group_scope) group in
 
         (* Unify the types with their tvars. *)
-        let funcs =
+        let typed_funcs =
           Array.mapi (fun i id ->
               let ty, func = types.(i) in
-              let _, fn_ty = IdentMap.find (prog.(id).name) group_map in
+              let _, fn_ty = IdentMap.find (funcs.(id).func_name) group_map in
               unify func.Typed_ast.loc fn_ty ty; func)
             group in
 
         (* Generalise the types. *)
         let new_root_scope =
           Array.fold_left (fun map id ->
-              let { name; _ } = prog.(id) in
-              let _, fn_ty = IdentMap.find name group_map in
+              let { func_name; _ } = funcs.(id) in
+              let _, fn_ty = IdentMap.find func_name group_map in
               let func_ty = generalise fn_ty in
-              IdentMap.add name (id, func_ty) map)
+              IdentMap.add func_name (id, func_ty) map)
             root_scope group in
-        (funcs :: typed_prog, new_root_scope))
+        (typed_funcs :: typed_prog, new_root_scope))
       ([], IdentMap.map (fun (id, (params, ret)) -> id, TyArr(params, ret)) externs) sccs in
   Array.of_list (List.rev typed_prog)

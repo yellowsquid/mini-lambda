@@ -18,13 +18,14 @@
 %token PLUS MINUS
 %token EQUAL NEQUAL
 %token AND OR
-%token LPAREN RPAREN LBRACE RBRACE
+%token PIPE
+%token LPAREN RPAREN LBRACE RBRACE LANGLE RANGLE
+%token ENUM
 %token FUNC EXTERN
 %token IF ELSE
 %token WHILE CONTINUE BREAK
 %token RETURN
 %token ARROW
-%token LAMBDA
 %token BIND
 %token COMMA
 %token SEMI COLON
@@ -36,13 +37,29 @@
 %%
 
 program:
-  funcs = list(func) EOF { Array.of_list funcs }
+  list(ty_decl) list(func) EOF { { tys = Array.of_list $1; funcs = Array.of_list $2 } }
+
+ty_decl:
+  | ENUM TYPE LBRACE constructors RBRACE
+    { { loc = $startpos; ty_name = $2; generics = []; consts = $4 } }
+  | ENUM TYPE LANGLE separated_list(COMMA, TYPE) RANGLE LBRACE constructors RBRACE
+    { { loc = $startpos; ty_name = $2; generics = $4; consts = $7 } }
+
+constructors:
+  | constructor constructors { $1 :: $2 }
+  | { [] }
+
+constructor:
+  | TYPE SEMI
+    { { loc = $startpos; const_name = $1; params = [] } }
+  | TYPE LPAREN separated_list(COMMA, ty) RPAREN SEMI
+    { { loc = $startpos; const_name = $1; params = $3 } }
 
 func:
-  | EXTERN IDENT LPAREN params = separated_list(COMMA, TYPE); RPAREN COLON return_ty = TYPE; SEMI
-    { { name = $2; loc = $startpos; rest = Extern (params, return_ty) } }
+  | EXTERN IDENT LPAREN params = separated_list(COMMA, ty); RPAREN COLON return_ty = ty; SEMI
+    { { func_name = $2; loc = $startpos; rest = Extern (params, return_ty) } }
   | FUNC IDENT; LPAREN params = separated_list(COMMA, named); RPAREN LBRACE body = statements; RBRACE
-    { { name = $2; loc = $startpos; rest = Definition (params, body) } }
+    { { func_name = $2; loc = $startpos; rest = Definition (params, body) } }
 
 statements:
   | statement statements { $1 :: $2 }
@@ -87,10 +104,7 @@ expr:
   | expr bin_op unary_expr { BinExpr($startpos, $2, $1, $3) }
 
 unary_expr:
-  | LAMBDA
-    LPAREN params = separated_list(COMMA, named); RPAREN
-    ARROW
-    body = postfix_expr;
+  | PIPE params = separated_list(COMMA, named); PIPE ARROW body = postfix_expr;
     { LambdaExpr($startpos, params, body) }
   | postfix_expr { $1 }
   | unary_op unary_expr { UnaryExpr($startpos, $1, $2) }
@@ -106,6 +120,10 @@ primary_expr:
   | INT { IntExpr($startpos, $1) }
   | TRUE { BoolExpr($startpos, true) }
   | FALSE { BoolExpr($startpos, false) }
+
+ty:
+  | TYPE { { loc = $startpos; base = $1; params = [] } }
+  | TYPE LANGLE separated_list(COMMA, ty) RANGLE { { loc = $startpos; base = $1; params = $3 } }
 
 named:
   | IDENT { $1 }
