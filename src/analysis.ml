@@ -57,6 +57,8 @@ let rec returns stmt = match stmt with
   | ReturnStmt _ -> Return
   | ExprStmt _ -> Passthrough
   | BindStmt _ -> Passthrough
+  | MatchStmt (_, _, cases) ->
+     cases |> List.map case_returns |> List.fold_left set_add [] |> set_to_branch
   | IfStmt (_, _, tblock, fblock) ->
      let tblock' = block_return tblock in
      let fblock' = block_return fblock in
@@ -86,6 +88,7 @@ let rec returns stmt = match stmt with
   | ContinueStmt (_, id) -> Continue id
   | BreakStmt (_, id) -> Break id
 and block_return stmts = List.fold_left merge_return Passthrough (List.map returns stmts)
+and case_returns (_, _, stmts) = block_return stmts
 
 let analyse program =
   Array.iter (Array.iter (fun func ->

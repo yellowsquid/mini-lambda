@@ -161,6 +161,7 @@ let rec flatten_stmt acc stmt = match stmt with
   | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
   (* Evaluate expression bind then conntinue *)
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
+  | MatchStmt _ -> failwith "todo"
   (* Evaluate condiition branch then continue *)
   | IfStmt (_, cond, tblock, fblock) ->
      flatten_expr (If (make_if_block tblock, make_if_block fblock) :: acc) cond

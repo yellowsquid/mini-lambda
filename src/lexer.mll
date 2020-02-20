@@ -36,6 +36,7 @@ rule token = parse
   | "enum" { ENUM }
   | "func" { FUNC }
   | "extern" { EXTERN }
+  | "match" { MATCH }
   | "if" { IF }
   | "else" { ELSE }
   | "while" { WHILE }

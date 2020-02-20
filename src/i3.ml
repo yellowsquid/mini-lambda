@@ -158,6 +158,7 @@ let step directives values envs = match directives, values, envs with
   (* Eval expression bind then continue *)
   | Stmt (BindStmt (_, id, e)) :: rest, _, _ ->
      Expr e :: Bind id :: rest, values, envs
+  | Stmt (MatchStmt _) :: _, _, _ -> failwith "todo"
   (* Eval condition then continue *)
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
      Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs

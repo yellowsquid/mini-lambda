@@ -166,6 +166,7 @@ let rec flatten_stmt acc stmt = match stmt with
   | ReturnStmt (_, e) -> flatten_expr (Return :: acc) e (* Safe as return clears stack *)
   | ExprStmt (_, e) -> flatten_expr (Pop :: acc) e
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
+  | MatchStmt _ -> failwith "todo"
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = add_block acc in
      flatten_expr [If (make_block tblock continue, make_block fblock continue)] cond

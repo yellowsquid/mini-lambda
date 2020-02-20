@@ -18,7 +18,7 @@ extern print_bool(Bool) : Unit;
 
 func print_if_some(print, option) {
     match option {
-        None -> return;
+        None -> {}
         Some(v) -> print(v);
     }
 }

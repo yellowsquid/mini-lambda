@@ -135,6 +135,7 @@ let rec eval_stmt env stmt cnt =
   (* Bind expression then continue on *)
   | BindStmt(_, id, e) ->
      eval_expr env e (fun e' -> Array.get env.binds id := e'; cnt None)
+  | MatchStmt _ -> failwith "todo"
   (* Evaluate condition then block. If block return then return, else continue on *)
   | IfStmt(_, cond, tblock, fblock) ->
      eval_expr env cond (fun cond' ->

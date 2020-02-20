@@ -172,7 +172,7 @@ let get_unary_type op = match op with
   | Invert -> TyBool, TyBool
 
 (* Checks the type of an expression *)
-let rec check_expr scope expr = match expr with
+let rec check_expr consts scope expr = match expr with
   | IdentExpr(loc, name) ->
      if name.[0] == '_' then
        raise(Error(loc, "attempt to use ignored name " ^ name))
@@ -218,20 +218,21 @@ let rec check_expr scope expr = match expr with
          | [] ->
             raise(Error(loc, "unbound variable " ^ name))
        in find_name scope
+  | ConstructorExpr _ -> failwith "todo"
   | IntExpr(loc, i) ->
      Typed_ast.IntExpr(loc, i), TyInt
   | BoolExpr(loc, b) ->
      Typed_ast.BoolExpr(loc, b), TyBool
   | BinExpr(loc, op, lhs, rhs) ->
      let ty_one, ty_two, ty_ret = get_bin_type op in
-     let lhs', ty_lhs = check_expr scope lhs in
+     let lhs', ty_lhs = check_expr consts scope lhs in
      unify loc ty_lhs ty_one;
-     let rhs', ty_rhs = check_expr scope rhs in
+     let rhs', ty_rhs = check_expr consts scope rhs in
      unify loc ty_rhs ty_two;
      Typed_ast.BinExpr(loc, op, lhs', rhs'), ty_ret
   | UnaryExpr(loc, op, arg) ->
      let ty_arg, ty_ret = get_unary_type op in
-     let arg', ty = check_expr scope arg in
+     let arg', ty = check_expr consts scope arg in
      unify loc ty ty_arg;
      Typed_ast.UnaryExpr(loc, op, arg'), ty_ret
   | LambdaExpr(loc, params, body) ->
@@ -245,7 +246,7 @@ let rec check_expr scope expr = match expr with
      in
      let captures = ref IdentMap.empty in
      let lambda_scope = LambdaScope(args, captures) in
-     let body, ty_body = check_expr (lambda_scope :: scope) body in
+     let body, ty_body = check_expr consts (lambda_scope :: scope) body in
      let lambda_ty = TyArr(Array.of_list (List.rev ty_args), ty_body) in
      let capture_list =
        Array.init (IdentMap.cardinal !captures)
@@ -263,8 +264,8 @@ let rec check_expr scope expr = match expr with
      (* The type is then unified with the calle's type - during unification *)
      (* ty_return is unified with the function's return type, yielding the *)
      (* type of the call expression. *)
-     let callee', ty_callee = check_expr scope callee in
-     let args' = List.map (check_expr scope) args in
+     let callee', ty_callee = check_expr consts scope callee in
+     let args' = List.map (check_expr consts scope) args in
      let arg_tys = List.map snd args' in
      let ret_ty = new_ty_var () in
      let ty_func = TyArr(Array.of_list arg_tys, ret_ty) in
@@ -285,49 +286,63 @@ let find_in_scope(scope, name, nb) = match scope with
      let map = IdentMap.add name (nb, ty) IdentMap.empty in
      (nb, nb + 1, ty, (BindScope map) :: x)
 
+let check_pattern _consts _pattern = failwith "todo"
+
 (* Checks the type of a statement. *)
-let rec check_statements ret_ty acc scope stats
+let rec check_statements consts ret_ty acc scope stats
   = let rec iter (nb, acc) scope stats = match stats with
       | ReturnStmt(loc, e) :: rest ->
-         let e', ty = check_expr scope e in
+         let e', ty = check_expr consts scope e in
          unify loc ty ret_ty;
          let node = Typed_ast.ReturnStmt(loc, e') in
          iter (nb, node :: acc) scope rest
       | ExprStmt(loc, e) :: rest ->
          (* It is a funky design choice to unify everything with unit. *)
-         let e', ty = check_expr scope e in
+         let e', ty = check_expr consts scope e in
          unify loc ty TyUnit;
          let node = Typed_ast.ExprStmt(loc, e') in
          iter (nb, node :: acc) scope rest
       | BindStmt(loc, name, e) :: rest ->
-         let e', ty = check_expr scope e in
+         let e', ty = check_expr consts scope e in
          let (nb, next_nb, bind_ty, scope') = find_in_scope(scope, name, nb) in
          unify loc ty bind_ty;
          let node = Typed_ast.BindStmt(loc, nb, e') in
          iter (next_nb, node :: acc) scope' rest
       | IgnoreStmt(loc, e) :: rest ->
          (* Extend funky design by having names starting _ pretend to bind. *)
-         let e', _ = check_expr scope e in
+         let e', _ = check_expr consts scope e in
          (* TODO: suggest e; if type is unit *)
          let node = Typed_ast.ExprStmt(loc, e') in
          iter (nb, node :: acc) scope rest
+      | MatchStmt(loc, e, cases) :: rest ->
+         let e', ty = check_expr consts scope e in
+         (* Check case does unification *)
+         let nb', cases' =
+           List.fold_left (fun (max_nb, acc) (loc, pattern, stmts) ->
+               let pattern_ty, pattern' = check_pattern consts pattern in
+               unify loc pattern_ty ty;
+               let nb', stmts' = check_statements consts ret_ty (nb, []) scope stmts in
+               let node = (loc, pattern', stmts') in
+               max max_nb nb', node :: acc) (nb, []) (List.rev cases) in
+         let node = Typed_ast.MatchStmt (loc, e', cases') in
+         iter (nb', node :: acc) scope rest
       | IfStmt(loc, cond, tblock, fblock) :: rest ->
-         let cond', cond_ty = check_expr scope cond in
+         let cond', cond_ty = check_expr consts scope cond in
          unify loc cond_ty TyBool;
          let ret_ty = new_ty_var () in
-         let nb', true_acc' = check_statements ret_ty (nb, []) scope tblock in
-         let nb'', false_acc' = check_statements ret_ty (nb, []) scope fblock in
+         let nb', true_acc' = check_statements consts ret_ty (nb, []) scope tblock in
+         let nb'', false_acc' = check_statements consts ret_ty (nb, []) scope fblock in
          let node = Typed_ast.IfStmt(loc, cond', List.rev true_acc', List.rev false_acc') in
          iter (max nb' nb'', node :: acc) scope rest
       | WhileStmt(loc, cond, lblock, eblock, label) :: rest ->
-         let cond', cond_ty = check_expr scope cond in
+         let cond', cond_ty = check_expr consts scope cond in
          unify loc cond_ty TyBool;
          let ret_ty  = new_ty_var () in
          let id, scope' = match add_label (Option.value label ~default:"_") scope with
            | None -> raise (Error (loc, "not in function."))
            | Some (x, y) -> x, y in
-         let nb', lacc = check_statements ret_ty (nb, []) scope' lblock in
-         let nb'', eacc = check_statements ret_ty (nb, []) scope eblock in
+         let nb', lacc = check_statements consts ret_ty (nb, []) scope' lblock in
+         let nb'', eacc = check_statements consts ret_ty (nb, []) scope eblock in
          let node = Typed_ast.WhileStmt (loc, id, cond', List.rev lacc, List.rev eacc) in
          iter (max nb' nb'', node :: acc) scope rest
       | ContinueStmt(loc, label) :: rest ->
@@ -346,7 +361,7 @@ let rec check_statements ret_ty acc scope stats
          (nb, acc)
     in iter acc scope stats
 
-let check_func prog externs group_scope id =
+let check_func consts prog externs group_scope id =
   let func = prog.(id) in
   match func.rest with
   | Extern _ ->
@@ -371,7 +386,7 @@ let check_func prog externs group_scope id =
      let scope = label_scope :: FuncScope (args, ret) :: group_scope in
 
      (* Recursively check the function. *)
-     let nb, body = check_statements ret (0, []) scope body in
+     let nb, body = check_statements consts ret (0, []) scope body in
      let new_body, num_locals = List.rev body, nb in
      let new_func =
        { Typed_ast.id
@@ -403,18 +418,15 @@ let check_extern types func = match func.rest with
 
 (* Finds the free variables in an expression. *)
 let rec find_refs_expr bound acc expr = match expr with
-  | IdentExpr(loc, name) ->
+  | IdentExpr (loc, name) ->
      if List.mem name bound then acc else (loc, name) :: acc
-  | IntExpr(_, _) ->
-     acc
-  | BoolExpr(_, _) ->
-     acc
-  | BinExpr(_, _, lhs, rhs) ->
-     find_refs_expr bound (find_refs_expr bound acc rhs) lhs
-  | UnaryExpr(_, _, rhs) -> find_refs_expr bound acc rhs
-  | LambdaExpr(_, params, body) ->
-     find_refs_expr (List.append params bound) acc body
-  | CallExpr(_, callee, args) ->
+  | ConstructorExpr _ -> failwith "todo"
+  | IntExpr _ -> acc
+  | BoolExpr _ -> acc
+  | BinExpr (_, _, lhs, rhs) -> find_refs_expr bound (find_refs_expr bound acc rhs) lhs
+  | UnaryExpr (_, _, rhs) -> find_refs_expr bound acc rhs
+  | LambdaExpr (_, params, body) -> find_refs_expr (List.append params bound) acc body
+  | CallExpr (_, callee, args) ->
      List.fold_left (find_refs_expr bound) (find_refs_expr bound acc callee) args
 
 (* Finds the free variables in a function body. *)
@@ -432,6 +444,8 @@ let rec find_refs_stat bound stats
              (name :: bound, find_refs_expr bound acc e)
           | IgnoreStmt (_, e) ->
              (bound, find_refs_expr bound acc e)
+          | MatchStmt (_, expr, cases) ->
+             bound, List.fold_left (find_refs_case bound) (find_refs_expr bound acc expr) cases
           | IfStmt (_, cond, tblock, fblock) ->
              (bound, (find_refs_expr bound acc cond)
                      @ (find_refs_stat bound tblock)
@@ -444,6 +458,7 @@ let rec find_refs_stat bound stats
           | BreakStmt _ -> (bound, acc)
         ) (bound, []) stats
     in acc
+and find_refs_case bound acc (_, _, stmts) = find_refs_stat bound stmts @ acc
 
 (* Helper structure for the very hacky and imperative SCC implementation. *)
 type dfs_info =
@@ -573,12 +588,12 @@ let check { funcs; _ } =
         let group_map = group_map funcs IdentMap.empty group in
         let group_scope = [GroupScope group_map; GlobalScope root_scope] in
         (* Typecheck individual methods *)
-        let types = Array.map (check_func funcs externs group_scope) group in
+        let func_types = Array.map (check_func base_types funcs externs group_scope) group in
 
         (* Unify the types with their tvars. *)
         let typed_funcs =
           Array.mapi (fun i id ->
-              let ty, func = types.(i) in
+              let ty, func = func_types.(i) in
               let _, fn_ty = IdentMap.find (funcs.(id).func_name) group_map in
               unify func.Typed_ast.loc fn_ty ty; func)
             group in

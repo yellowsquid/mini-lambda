@@ -22,14 +22,20 @@ type expr
   | LambdaExpr of loc * int * expr array * expr
   | CallExpr of loc * expr * expr array
 
+type pattern
+  = Enum of loc * int * pattern list
+  | Variable of loc * id
+
 type statement
   = ReturnStmt of loc * expr
   | ExprStmt of loc * expr
   | BindStmt of loc * id * expr
+  | MatchStmt of loc * expr * case list
   | IfStmt of loc * expr * statement list * statement list
   | WhileStmt of loc * id * expr * statement list * statement list
   | ContinueStmt of loc * id
   | BreakStmt of loc * id
+and case = loc * pattern * statement list
 
 type func =
   { id: id
@@ -43,6 +49,10 @@ type func =
 type program = func array array
 
 let list_sep ppf () = Format.fprintf ppf ",@ "
+let pp_list pp_func ppf list =
+  Format.fprintf ppf "@[<1>(";
+  Format.pp_print_list ~pp_sep:list_sep pp_func ppf list;
+  Format.fprintf ppf ")@]"
 
 let rec pp_expr ppf expr = match expr with
   | FuncExpr (_, id) -> Format.fprintf ppf "Func(%d)" id
@@ -54,17 +64,17 @@ let rec pp_expr ppf expr = match expr with
   | BinExpr (_, op, lhs, rhs) ->
      Format.fprintf ppf "@[<4>BinExpr(%s" (Ops.string_of_bin_op op);
      list_sep ppf ();
-     pp_expr_list ppf [lhs; rhs];
+     pp_list pp_expr ppf [lhs; rhs];
      Format.fprintf ppf ")@]";
   | UnaryExpr (_, op, e) ->
      Format.fprintf ppf "@[<4>UnaryExpr(%s" (Ops.string_of_unary_op op);
      list_sep ppf ();
-     pp_expr_list ppf [e];
+     pp_list pp_expr ppf [e];
      Format.fprintf ppf ")@]";
   | LambdaExpr (_, args, captures, body) ->
      Format.fprintf ppf "@[<4>LambdaExpr(%d " args;
      list_sep ppf ();
-     pp_expr_list ppf (Array.to_list captures);
+     pp_list pp_expr ppf (Array.to_list captures);
      list_sep ppf ();
      pp_expr ppf body;
      Format.fprintf ppf ")@]"
@@ -72,12 +82,16 @@ let rec pp_expr ppf expr = match expr with
      Format.fprintf ppf "@[<4>CallExpr(";
      pp_expr ppf callee;
      list_sep ppf ();
-     pp_expr_list ppf (Array.to_list args);
+     pp_list pp_expr ppf (Array.to_list args);
      Format.fprintf ppf ")@]"
-and pp_expr_list ppf exprs =
-  Format.fprintf ppf "@[<1>(";
-  Format.pp_print_list ~pp_sep:list_sep pp_expr ppf exprs;
-  Format.fprintf ppf ")@]"
+
+let rec pp_pattern ppf pattern = match pattern with
+  | Enum (_, variant, patterns) ->
+     Format.fprintf ppf "@[<4>Enum(%d" variant;
+     list_sep ppf ();
+     pp_list pp_pattern ppf patterns;
+     Format.fprintf ppf ")@]"
+  | Variable (_, id) -> Format.fprintf ppf "%d" id
 
 let rec pp_stmt ppf stmt = match stmt with
   | ReturnStmt (_, expr) ->
@@ -93,26 +107,34 @@ let rec pp_stmt ppf stmt = match stmt with
      list_sep ppf ();
      pp_expr ppf expr;
      Format.fprintf ppf ")@]"
+  | MatchStmt (_, expr, cases) ->
+     Format.fprintf ppf "@[<4>MatchStmt(";
+     pp_expr ppf expr;
+     list_sep ppf ();
+     pp_list pp_case ppf cases;
+     Format.fprintf ppf ")@]";
   | IfStmt (_, cond, tblock, fblock) ->
      Format.fprintf ppf "@[<4>IfStmt(";
      pp_expr ppf cond;
      list_sep ppf ();
-     pp_stmt_list ppf tblock;
+     pp_list pp_stmt ppf tblock;
      list_sep ppf ();
-     pp_stmt_list ppf fblock;
+     pp_list pp_stmt ppf fblock;
      Format.fprintf ppf ")@]"
   | WhileStmt (_, id, cond, lblock, eblock) ->
      Format.fprintf ppf "@[<4>WhileStmt(%d" id;
      list_sep ppf ();
      pp_expr ppf cond;
      list_sep ppf ();
-     pp_stmt_list ppf lblock;
+     pp_list pp_stmt ppf lblock;
      list_sep ppf ();
-     pp_stmt_list ppf eblock;
+     pp_list pp_stmt ppf eblock;
      Format.fprintf ppf ")@]"
   | ContinueStmt (_, id) -> Format.fprintf ppf "ContinueStmt(%d)" id
   | BreakStmt (_, id) -> Format.fprintf ppf "BreakStmt(%d)" id
-and pp_stmt_list ppf stmts =
-  Format.fprintf ppf "@[<1>(";
-  Format.pp_print_list ~pp_sep:list_sep pp_stmt ppf stmts;
-  Format.fprintf ppf ")@]"
+and pp_case ppf (_, pattern, stmts) =
+  Format.fprintf ppf "@[<1>";
+  pp_pattern ppf pattern;
+  list_sep ppf ();
+  pp_list pp_stmt ppf stmts;
+  Format.fprintf ppf ")@]";

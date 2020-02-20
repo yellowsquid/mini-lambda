@@ -128,6 +128,7 @@ let rec interpret_stmt env stmt =
         Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e')
      );
      None
+  | MatchStmt _ -> failwith "todo"
   | IfStmt(pos, cond, then_block, else_block) ->
      (match interpret_expr env cond with
       | Bool(true) -> apply_block env then_block

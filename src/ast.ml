@@ -10,6 +10,7 @@ type loc = Lexing.position
 
 type expr
   = IdentExpr of loc * string
+  | ConstructorExpr of loc * string
   | IntExpr of loc * int
   | BoolExpr of loc * bool
   | BinExpr of loc * Ops.bin_op * expr * expr
@@ -17,15 +18,21 @@ type expr
   | LambdaExpr of loc * string list * expr
   | CallExpr of loc * expr * expr list
 
+type pattern
+  = Variable of loc * string
+  | Enum of loc * string * pattern list
+
 type statement
   = ReturnStmt of loc * expr
   | ExprStmt of loc * expr
   | BindStmt of loc * string * expr
   | IgnoreStmt of loc * expr
+  | MatchStmt of loc * expr * case list
   | IfStmt of loc * expr * statement list * statement list
   | WhileStmt of loc * expr * statement list * statement list * string option
   | ContinueStmt of loc * string option
   | BreakStmt of loc * string option
+and case = loc * pattern * statement list
 
 type ty = { loc: loc; base: string; params: ty list }
 

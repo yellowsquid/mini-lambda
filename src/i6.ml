@@ -207,6 +207,7 @@ let rec flatten_stmt env acc stmt =
   | ReturnStmt (_, e) -> flatten_expr env (Return env :: acc) depth e
   | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
+  | MatchStmt _ -> failwith "todo"
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
      let tblock' = add_block (make_block env tblock continue) in
