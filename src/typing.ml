@@ -30,9 +30,9 @@ type ty
   (* Function type *)
   | TyArr of ty array * ty
   (* Type variable *)
-  | TyVar of var_ty ref
+  | TyVar of ty array option * var_ty ref
   (* Forall qualified type - must be substituted *)
-  | TyAbs of int
+  | TyAbs of int * ty array option
   (* Enum type: name and generic parameters *)
   | TyEnum of string * ty array
 and var_ty
@@ -43,16 +43,34 @@ let rec name_type ty = match ty with
   | TyInt -> "int"
   | TyBool -> "bool"
   | TyUnit -> "unit"
-  | TyArr(params, ret) ->
-     let args = "(" ^ (String.concat ", " (Array.to_list (Array.map name_type params))) ^ ")" in
-     let ret = name_type ret in
-     args ^ " -> " ^ ret
-  | TyVar(ty) -> (match !ty with
-                  | Unbound(n) -> "'" ^ string_of_int n
-                  | Bound(ty) -> name_type ty)
-  | TyAbs(n) -> "''" ^ string_of_int n
+  | TyArr (params, ret) ->
+     let params' = String.concat ", " (Array.to_list (Array.map name_type params)) in
+     Printf.sprintf "(%s) -> %s" params' (name_type ret)
+  | TyVar (_, { contents = Bound ty }) -> Printf.sprintf "*(%s)" (name_type ty)
+  | TyVar (None, { contents = Unbound id }) -> Printf.sprintf "'%d" id
+  | TyVar (Some options, { contents = Unbound id }) ->
+     let options' = String.concat " | " (options |> Array.map name_type |> Array.to_list) in
+     Printf.sprintf "'%d(%s)" id options'
+  | TyAbs (n, Some options) ->
+     let options' = String.concat " | " (options |> Array.map name_type |> Array.to_list) in
+     Printf.sprintf "&%d(%s)" n options'
+  | TyAbs (n, None) -> Printf.sprintf "&%d" n
   | TyEnum (name, params) ->
-     name ^ "<" ^ (String.concat ", " (Array.to_list (Array.map name_type params))) ^ ">"
+     let params' = String.concat ", " (Array.to_list (Array.map name_type params)) in
+     Printf.sprintf "%s<%s>" name params'
+
+(* Helper to generate a type variable. *)
+let new_unbound_var, new_option_var =
+  let ty_idx = ref 0 in
+  let eval_unbound () =
+    let idx = !ty_idx in
+    incr ty_idx;
+    TyVar (None, ref (Unbound idx)) in
+  let eval_option options =
+    let idx = !ty_idx in
+    incr ty_idx;
+    TyVar (Some options, ref (Unbound idx)) in
+  eval_unbound, eval_option
 
 (* Scope to find types in. *)
 type lambda_capture = int * Typed_ast.expr * ty
@@ -64,51 +82,105 @@ type type_scope
   | LambdaScope of (int * ty) IdentMap.t * (lambda_capture IdentMap.t) ref
   | LabelScope of int IdentMap.t * int option
 
+(* Generalises a type *)
+let rec generalise ty = match ty with
+  | TyInt -> ty
+  | TyBool -> ty
+  | TyUnit -> ty
+  | TyArr (params, ret) -> TyArr (Array.map generalise params, generalise ret)
+  | TyAbs _ -> failwith "should have been instantiated"
+  | TyVar (_, { contents = Bound ty }) -> generalise ty
+  | TyVar (options, { contents = Unbound id }) -> TyAbs (id, options)
+  | TyEnum (name, params) -> TyEnum (name, Array.map generalise params)
+
+(* Instantiates a type *)
+let rec instantiate context ty =
+  let loop = instantiate context in
+  match ty with
+  | TyInt -> ty
+  | TyBool -> ty
+  | TyUnit -> ty
+  | TyArr (params, ret) -> TyArr (Array.map loop params, loop ret)
+  | TyAbs (id, Some options) ->
+     (match Hashtbl.find_opt context id with
+      | Some v -> v
+      | None ->
+         let ty = new_option_var options in
+         Hashtbl.add context id ty;
+         ty)
+  | TyAbs (id, None) ->
+     (match Hashtbl.find_opt context id with
+      | Some v -> v
+      | None ->
+         let ty = new_unbound_var () in
+         Hashtbl.add context id ty;
+         ty)
+  | TyVar _ -> failwith "should have been generalised"
+  | TyEnum (name, params) -> TyEnum (name, Array.map loop params)
+
 (* Occurs check *)
 let rec occurs loc r ty = match ty with
-  | TyInt -> ()
-  | TyBool -> ()
-  | TyUnit -> ()
+  | TyInt -> None
+  | TyBool -> None
+  | TyUnit -> None
   | TyArr(params, ret) ->
-     occurs loc r ret;
-     Array.iter (occurs loc r) params
+     let iter acc ty = if Option.is_some acc then acc else occurs loc r ty in
+     Array.fold_left iter (occurs loc r ret) params
   | TyAbs _ -> failwith "should have been instantiated"
-  | TyVar { contents = Bound ty } -> occurs loc r ty
-  | TyVar r' when r = r' -> raise(Error(loc, "recursive type"))
-  | TyVar _ -> ()
-  | TyEnum (_, params) -> Array.iter (occurs loc r) params
+  | TyVar (_, { contents = Bound ty }) -> occurs loc r ty
+  | TyVar (_, r') when r = r' -> Some (loc, "recursive type")
+  | TyVar (None, _) -> None
+  | TyVar (Some options, _) ->
+     let iter acc ty = if Option.is_some acc then acc else occurs loc r ty in
+     Array.fold_left iter None options
+  | TyEnum (_, params) ->
+     let iter acc ty = if Option.is_some acc then acc else occurs loc r ty in
+     Array.fold_left iter None params
 
 (* Implementation of unification *)
-let rec unify loc a b = match a, b with
-  | x, y when x = y -> ()
-  | TyVar ({ contents = Bound ty }), ty' -> unify loc ty ty'
-  | ty, TyVar ({ contents = Bound ty' }) -> unify loc ty ty'
-  | TyVar ({ contents = Unbound _ } as r), ty ->
-     occurs loc r ty;
-     r := Bound ty
-  | ty, TyVar ({ contents = Unbound _ } as r) ->
-     occurs loc r ty;
-     r := Bound ty
-  | TyArr(pa, ra), TyArr(pb, rb) when Array.length pa = Array.length pb ->
-     Array.iter2 (unify loc) pa pb;
-     unify loc ra rb
-  | TyEnum ("Int", [||]), TyInt -> ()
-  | TyInt, TyEnum ("Int", [||]) -> ()
-  | TyEnum ("Bool", [||]), TyBool -> ()
-  | TyBool, TyEnum ("Bool", [||]) -> ()
-  | TyEnum ("Unit", [||]), TyUnit -> ()
-  | TyUnit, TyEnum ("Unit", [||]) -> ()
-  | TyEnum (s, a_params), TyEnum (t, b_params) when s = t ->
-     Array.iter2 (unify loc) a_params b_params
-  | _, _ ->
-     raise(Error(loc, "mismatched types: " ^ name_type a ^ " and " ^ name_type b))
-
-(* Helper to generate a type variable. *)
-let ty_idx = ref 0
-let new_ty_var () =
-  let idx = !ty_idx in
-  ty_idx := idx + 1;
-  TyVar (ref (Unbound idx))
+let unify loc a b =
+  let rec loop loc first a b = match a, b, first with
+    | x, y, _ when x = y -> None
+    | TyVar (_, { contents = Bound ty }), ty', _ -> loop loc true ty ty'
+    | ty, TyVar (_, { contents = Bound ty' }), _ -> loop loc true ty ty'
+    | TyVar (None, r), ty, _ ->
+       (match occurs loc r ty with
+        | Some v -> Some v
+        | None -> (r := Bound ty; None))
+    | ty, TyVar (None, r), _ ->
+       (match occurs loc r ty with
+        | Some v -> Some v
+        | None -> (r := Bound ty; None))
+    | TyVar (Some options, r), ty, _ ->
+       let iter (errs, last) option = match last with
+         | Some _ -> last :: errs, loop loc true (instantiate (Hashtbl.create 5) option) ty
+         | None -> errs, last in
+       (match options |> Array.fold_left iter ([], Some (loc, "failed to match union")) |> snd with
+        | Some v -> Some v
+        | None -> (r := Bound ty; None))
+    | ty, TyVar (Some options, r), _ ->
+       let iter (errs, last) option = match last with
+         | Some _ -> last :: errs, loop loc true (instantiate (Hashtbl.create 5) option) ty
+         | None -> errs, last in
+       (match options |> Array.fold_left iter ([], Some (loc, "failed to match union")) |> snd with
+        | Some v -> Some v
+        | None -> (r := Bound ty; None))
+    | TyArr(pa, ra), TyArr(pb, rb), _ when Array.length pa = Array.length pb ->
+       List.fold_left2 iter (loop loc true ra rb) (Array.to_list pa) (Array.to_list pb)
+    | TyEnum ("Int", [||]), TyInt, _ -> None
+    | TyEnum ("Bool", [||]), TyBool, _ -> None
+    | TyEnum ("Unit", [||]), TyUnit, _ -> None
+    | TyEnum (na, pa), TyEnum (nb, pb), _ when na = nb ->
+       List.fold_left2 iter None (Array.to_list pa) (Array.to_list pb)
+    | x, y, true -> loop loc false y x
+    | _, _, false ->
+       Some (loc, Printf.sprintf "mismatched types: %s and %s" (name_type a) (name_type b))
+  and iter acc a b = match acc with
+    | Some v -> Some v
+    | None -> loop loc true a b in
+  match iter None a b with
+  | Some (loc, msg) -> raise (Error (loc, msg))
+  | None -> ()
 
 (* Helper to generate while labels. *)
 let add_label, get_label =
@@ -134,39 +206,12 @@ let add_label, get_label =
     | None -> do_current scope in
   eval_add, eval_get
 
-(* Generalises a type *)
-let rec generalise ty = match ty with
-  | TyInt -> ty
-  | TyBool -> ty
-  | TyUnit -> ty
-  | TyArr (params, ret) -> TyArr (Array.map generalise params, generalise ret)
-  | TyAbs _ -> failwith "should have been instantiated"
-  | TyVar { contents = Bound ty } -> generalise ty
-  | TyVar { contents = Unbound id } -> TyAbs id
-  | TyEnum (name, params) -> TyEnum (name, Array.map generalise params)
-
-(* Instantiates a type *)
-let rec instantiate context ty =
-  let loop = instantiate context in
-  match ty with
-  | TyInt -> ty
-  | TyBool -> ty
-  | TyUnit -> ty
-  | TyArr (params, ret) -> TyArr (Array.map loop params, loop ret)
-  | TyAbs id ->
-     (match Hashtbl.find_opt context id with
-      | Some v -> v
-      | None ->
-         let ty = new_ty_var () in
-         Hashtbl.add context id ty;
-         ty)
-  | TyVar _ -> failwith "should have been generalised"
-  | TyEnum (name, params) -> TyEnum (name, Array.map loop params)
-
 let get_bin_type op = match op with
   | Add -> TyInt, TyInt, TyInt
   | Sub -> TyInt, TyInt, TyInt
-  | Equal -> let ty = new_ty_var () in ty, ty, TyBool
+  | Equal ->
+     let ty = new_option_var [|TyInt; TyBool; TyUnit|] in
+     ty, ty, TyBool
   | And -> TyBool, TyBool, TyBool
   | Or -> TyBool, TyBool, TyBool
 
@@ -241,7 +286,7 @@ let rec check_expr consts scope expr = match expr with
        List.fold_left
          (fun (map, ty_args) param ->
            let id = IdentMap.cardinal map in
-           let ty_arg = new_ty_var () in
+           let ty_arg = new_unbound_var () in
            IdentMap.add param (id, ty_arg) map, ty_arg :: ty_args
          ) (IdentMap.empty, []) params
      in
@@ -267,7 +312,7 @@ let rec check_expr consts scope expr = match expr with
      (* type of the call expression. *)
      let callee', ty_callee = check_expr consts scope callee in
      let args', arg_tys = args |> List.map (check_expr consts scope) |> List.split in
-     let ret_ty = new_ty_var () in
+     let ret_ty = new_unbound_var () in
      let ty_func = TyArr (Array.of_list arg_tys, ret_ty) in
      unify loc ty_func ty_callee;
      Typed_ast.CallExpr (loc, callee', Array.of_list args'), ret_ty
@@ -287,11 +332,11 @@ let find_in_scope scope name nb = match scope with
        let id, ty = IdentMap.find name map in
        (id, nb, ty, scope)
      else
-       let ty = new_ty_var () in
+       let ty = new_unbound_var () in
        let map = IdentMap.add name (nb, ty) map in
        (nb, nb + 1, ty, (BindScope map) :: rest)
   | x ->
-     let ty = new_ty_var () in
+     let ty = new_unbound_var () in
      let map = IdentMap.add name (nb, ty) IdentMap.empty in
      (nb, nb + 1, ty, (BindScope map) :: x)
 
@@ -365,7 +410,7 @@ let rec check_statements consts ret_ty acc scope stats
       | IfStmt(loc, cond, tblock, fblock) :: rest ->
          let cond', cond_ty = check_expr consts scope cond in
          unify loc cond_ty TyBool;
-         let ret_ty = new_ty_var () in
+         let ret_ty = new_unbound_var () in
          let nb', true_acc' = check_statements consts ret_ty (nb, []) scope tblock in
          let nb'', false_acc' = check_statements consts ret_ty (nb, []) scope fblock in
          let node = Typed_ast.IfStmt(loc, cond', List.rev true_acc', List.rev false_acc') in
@@ -373,7 +418,7 @@ let rec check_statements consts ret_ty acc scope stats
       | WhileStmt(loc, cond, lblock, eblock, label) :: rest ->
          let cond', cond_ty = check_expr consts scope cond in
          unify loc cond_ty TyBool;
-         let ret_ty  = new_ty_var () in
+         let ret_ty  = new_unbound_var () in
          let id, scope' = match add_label (Option.value label ~default:"_") scope with
            | None -> raise (Error (loc, "not in function."))
            | Some (x, y) -> x, y in
@@ -415,9 +460,9 @@ let check_func consts externs funcs group_scope id =
      (* Set up argument / return types. *)
      let args =
        List.fold_left (fun map name ->
-           IdentMap.add name (IdentMap.cardinal map, new_ty_var ()) map)
+           IdentMap.add name (IdentMap.cardinal map, new_unbound_var ()) map)
          IdentMap.empty params in
-     let ret = new_ty_var () in
+     let ret = new_unbound_var () in
      let label_scope = LabelScope (IdentMap.empty, None) in
      let scope = label_scope :: FuncScope (args, ret) :: group_scope in
 
@@ -460,7 +505,7 @@ let group_map funcs base group =
   Array.fold_left (fun scope id ->
       if id >= 0 then
         let { func_name; _ } = funcs.(id) in
-        IdentMap.add func_name (id, new_ty_var ()) scope
+        IdentMap.add func_name (id, new_unbound_var ()) scope
       else scope) base group
 
 let check_group check funcs (acc, scope) group =
@@ -495,7 +540,7 @@ let check_const types generics const =
 let check_ty_decl types acc ty_decl =
   let ty_generics = ty_decl.generics in
   let generics =
-    ty_generics |> List.map (fun name -> name, new_ty_var ()) |> List.to_seq |> IdentMap.of_seq in
+    ty_generics |> List.map (fun name -> name, new_unbound_var ()) |> List.to_seq |> IdentMap.of_seq in
   let ty =
     TyEnum (ty_decl.ty_name, ty_generics
                         |> List.map (fun name -> IdentMap.find name generics)

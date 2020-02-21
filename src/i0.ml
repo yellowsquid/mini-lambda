@@ -17,7 +17,7 @@ type value
 and env =
   { funcs: value array
   ; captures: value array
-  ; binds: value ref array
+  ; binds: value array
   ; args: value array
   ; debug: bool
   }
@@ -27,9 +27,10 @@ let value_to_string value = match value with
   | Break id -> Printf.sprintf "Break(%d)" id
   | Continue id -> Printf.sprintf "Continue(%d)" id
   | Unit -> "()"
-  | Bool(b) -> string_of_bool b
-  | Int(i) -> string_of_int i
-  | Lambda(_) -> "λ"
+  | Bool b -> string_of_bool b
+  | Int i -> string_of_int i
+  | Lambda _ -> "λ"
+  | Enum (var, _) -> Printf.sprintf "Enum(%d)" var
 
 let step = ref 0
 
@@ -49,6 +50,7 @@ let do_bin_op pos op lhs rhs = match op, lhs, rhs with
   | Sub, Int a, Int b -> Int (a - b)
   | Equal, Int a, Int b -> Bool (a = b)
   | Equal, Bool a, Bool b -> Bool (a = b)
+  | Equal, Unit, Unit -> Bool true
   | And, Bool a, Bool b -> Bool (a && b)
   | Or, Bool a, Bool b -> Bool (a || b)
   | _, _, _ -> raise (Error (pos, bin_type_mismatch op lhs rhs))
@@ -60,35 +62,36 @@ let do_unary_op pos op e = match op, e with
 (* Proof: Observation *)
 let rec interpret_expr env expr =
   let result = match expr with
-    | FuncExpr(_, id) -> Array.get env.funcs id
-    | EnvExpr(_, id) -> Array.get env.captures id
-    | BoundExpr(_, id) -> !(Array.get env.binds id)
-    | ArgExpr(_, id) -> Array.get env.args id
-    | IntExpr(_, i) -> Int(i)
-    | BoolExpr(_, b) -> Bool(b)
-    | BinExpr(pos, op, lhs, rhs) ->
+    | FuncExpr (_, id) -> env.funcs.(id)
+    | EnvExpr (_, id) -> env.captures.(id)
+    | BoundExpr (_, id) -> env.binds.(id)
+    | ArgExpr (_, id) -> env.args.(id)
+    | IntExpr (_, i) -> Int i
+    | BoolExpr (_, b) -> Bool b
+    | BinExpr (pos, op, lhs, rhs) ->
        let lhs' = interpret_expr env lhs in
        let rhs' = interpret_expr env rhs in
        do_bin_op pos op lhs' rhs'
-    | UnaryExpr(pos, op, e) ->
+    | UnaryExpr (pos, op, e) ->
        let e' = interpret_expr env e in
        do_unary_op pos op e'
-    | LambdaExpr(_, params, captures, body) -> Lambda (eval_lambda env params captures body)
-    | CallExpr(pos, callee, args) ->
+    | LambdaExpr (_, params, captures, body) -> Lambda (eval_lambda env params captures body)
+    | CallExpr (pos, callee, args) ->
        let callee' = interpret_expr env callee in
        let args' = Array.map (interpret_expr env) args in
        (match callee' with
-       | Lambda(f) -> f(env, args')
-       | _ ->
-          let ty_callee = value_to_string callee' in
-          let msg = Printf.sprintf "type mismatch for call: got %s" ty_callee in
-          raise(Error(pos, msg)))
-    | ConstructorExpr (_, _, _) -> failwith "todo: constructor in i0"
-  in
-  if env.debug then begin
-      Typed_ast.pp_expr Format.std_formatter expr;
-      Format.printf " -> %s@\n" (value_to_string result)
-    end;
+        | Lambda f -> f(env, args')
+        | _ ->
+           let ty_callee = value_to_string callee' in
+           let msg = Printf.sprintf "type mismatch for call: got %s" ty_callee in
+           raise (Error (pos, msg)))
+    | ConstructorExpr (_, variant, exprs) ->
+       let exprs' = Array.map (interpret_expr env) exprs in
+       Enum (variant, exprs') in
+  if env.debug
+  then
+      (Typed_ast.pp_expr Format.std_formatter expr;
+       Format.printf " -> %s@\n" (value_to_string result));
   result
 and eval_lambda env params captures body  =
   let capture expr =
@@ -105,36 +108,69 @@ and eval_lambda env params captures body  =
       let env' = { funcs = env.funcs
                  ; captures = captured
                  ; binds = env.binds
-                 ; args = args
+                 ; args
                  ; debug = env.debug
                  } in
       interpret_expr env' body
   in
   eval
 
+let rec pattern_matches env v pattern = match v, pattern with
+  | Enum (var, params), Typed_ast.Enum (_, variant, patterns) when var = variant ->
+     List.fold_left2 (fun (matched, env) v pattern ->
+         if matched
+         then pattern_matches env v pattern
+         else false, env) (true, env) (Array.to_list params) patterns
+  | _, Enum _ -> false, env
+  | x, Variable (_, id) ->
+     let binds = Array.copy env.binds in
+     binds.(id) <- x;
+     let env' = { funcs = env.funcs
+                ; captures = env.captures
+                ; binds
+                ; args = env.args
+                ; debug = env.debug
+                } in
+     true, env'
+
 let rec interpret_stmt env stmt =
   if env.debug then begin
       Format.printf "Step %d@\n" !step;
       Typed_ast.pp_stmt Format.std_formatter stmt;
-      Format.printf "@\n@\n";
+      Format.printf "@\n";
+      ignore (read_line ());
       incr step
     end;
 
   match stmt with
-  | ReturnStmt(_, e) -> interpret_expr env e
-  | ExprStmt(_, e) -> ignore (interpret_expr env e); None
-  | BindStmt(_, id, e) ->
+  | ReturnStmt (_, e) -> interpret_expr env e
+  | ExprStmt (_, e) -> ignore (interpret_expr env e); None
+  | BindStmt (_, id, e) ->
      let e' = interpret_expr env e in
-     (Array.get env.binds id) := e';
+     env.binds.(id) <- e';
      (if env.debug then
         Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e')
      );
      None
-  | MatchStmt _ -> failwith "todo: match in i0"
-  | IfStmt(pos, cond, then_block, else_block) ->
+  | MatchStmt (_, e, cases) ->
+     let e' = interpret_expr env e in
+     let matcher = pattern_matches env e' in
+     cases
+     |> List.fold_left (fun (v, matched) (_, pattern, block) ->
+            if matched
+            then v, true
+            else
+              let was_match, env' = matcher pattern in
+              if was_match
+              then
+                (Array.iteri (Array.set env.binds) env'.binds;
+                 apply_block env block, true)
+              else None, false) (None, false)
+     |> fst
+  | IfStmt (pos, cond, then_block, else_block) ->
      (match interpret_expr env cond with
-      | Bool(true) -> apply_block env then_block
-      | Bool(false) -> apply_block env else_block
+      | Bool true -> apply_block env then_block
+      | Bool false -> apply_block env else_block
       | _ -> raise(Error(pos, "condition with not a bool")))
   | WhileStmt (pos, id, cond, lblock, eblock) ->
      (match interpret_expr env cond with
@@ -197,7 +233,7 @@ let interpret_func (func: Typed_ast.func) =
       else
         let env' = { funcs = env.funcs
                    ; captures = Array.of_list []
-                   ; binds = Array.init func.num_locals (fun _ -> ref Unit)
+                   ; binds = Array.init func.num_locals (fun _ -> Unit)
                    ; args = args
                    ; debug = env.debug
                    }

@@ -58,6 +58,7 @@ let rec returns stmt = match stmt with
   | ExprStmt _ -> Passthrough
   | BindStmt _ -> Passthrough
   | MatchStmt (_, _, cases) ->
+     (* Check match cases exhaustive *)
      cases |> List.map case_returns |> List.fold_left set_add [] |> set_to_branch
   | IfStmt (_, _, tblock, fblock) ->
      let tblock' = block_return tblock in
@@ -91,10 +92,11 @@ and block_return stmts = List.fold_left merge_return Passthrough (List.map retur
 and case_returns (_, _, stmts) = block_return stmts
 
 let analyse program =
-  Array.iter (Array.iter (fun func ->
-      if Option.is_some func.body then
-        match block_return (Option.get func.body) with
-        | Passthrough -> ()
-        | Return -> ()
-        | x -> raise (Error (func.loc, "not all branches return: " ^ (string_of_return x)))
-    )) program
+  program
+  |> Array.iter
+       (Array.iter (fun func ->
+            if Option.is_some func.body then
+              match block_return (Option.get func.body) with
+              | Passthrough -> ()
+              | Return -> ()
+              | x -> raise (Error (func.loc, "not all branches return: " ^ (string_of_return x)))))

@@ -52,12 +52,50 @@ func print_list(print, list) {
     while true {
         match rest {
             Nil -> break;
-            Cons(t, rest) -> {
+            Cons(t, r) -> {
                 print(t);
-                rest <- list;
+                rest <- r;
             }
         }
     }
+}
+
+func option_equal(equal, a, b) {
+    match a {
+        None -> {
+            match b {
+                None -> return true;
+                Some(v) -> return false;
+            }
+        }
+        Some(v) -> {
+            match b {
+                None -> return false;
+                Some(w) -> return equal(v, w);
+            }
+        }
+    }
+}
+
+func result_equal(ok_equal, err_equal, a, b) {
+    match a {
+        Ok(v) -> {
+            match b {
+                Ok(w) -> return ok_equal(v, w);
+                Err(_) -> return false;
+            }
+        }
+        Err(e) -> {
+            match b {
+                Ok(_) -> return false;
+                Err(f) -> return err_equal(e, f);
+            }
+        }
+    }
+}
+
+func equals(a, b) {
+    return a == b;
 }
 
 func main() {
@@ -74,5 +112,8 @@ func main() {
 
     print_result(|v| -> print_if_some(print_bool, v), print_int, transmute_option(option));
     print_result(|v| -> print_if_some(print_bool, v), print_int, transmute_option(err_option));
-    print_bool(option == transmute_result(transmute_option(option)));
+
+    transmuted <- transmute_result(transmute_option(option));
+    equaled <- option_equal(|a, b| -> result_equal(equals, equals, a, b), option, transmuted);
+    print_bool(equaled);
 }
