@@ -148,6 +148,7 @@ let step directives values envs = match directives, values, envs with
   | Expr (CallExpr (_, callee, args)) :: rest, _, _ ->
      let evaled_args = List.map (fun e -> Expr e) (Array.to_list args) in
      Expr callee :: evaled_args @ (Call (Array.length args) :: PopEnv :: rest), values, envs
+  | Expr (ConstructorExpr _) :: _, _, _ -> failwith "todo: constructor in i3"
 
   (* Calculate value and then continue *)
   | Stmt (ReturnStmt (_, e)) :: rest, _, _ ->
@@ -158,7 +159,7 @@ let step directives values envs = match directives, values, envs with
   (* Eval expression bind then continue *)
   | Stmt (BindStmt (_, id, e)) :: rest, _, _ ->
      Expr e :: Bind id :: rest, values, envs
-  | Stmt (MatchStmt _) :: _, _, _ -> failwith "todo"
+  | Stmt (MatchStmt _) :: _, _, _ -> failwith "todo: match in i3"
   (* Eval condition then continue *)
   | Stmt (IfStmt (_, cond, tblock, fblock)) :: rest, _, _ ->
      Expr cond :: If (make_block tblock, make_block fblock) :: rest, values, envs

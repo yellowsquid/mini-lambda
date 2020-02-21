@@ -153,6 +153,7 @@ let rec flatten_expr acc expr = match expr with
   | CallExpr (_, callee, args) ->
      let acc' = Call (Array.length args) :: PopEnv :: acc in
      flatten_expr (List.fold_left flatten_expr acc' (List.rev (Array.to_list args))) callee
+  | ConstructorExpr _ -> failwith "todo: constructor in i4"
 
 let rec flatten_stmt acc stmt = match stmt with
   (* Calculate value then continue *)
@@ -161,7 +162,7 @@ let rec flatten_stmt acc stmt = match stmt with
   | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
   (* Evaluate expression bind then conntinue *)
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
-  | MatchStmt _ -> failwith "todo"
+  | MatchStmt _ -> failwith "todo: match in i4"
   (* Evaluate condiition branch then continue *)
   | IfStmt (_, cond, tblock, fblock) ->
      flatten_expr (If (make_if_block tblock, make_if_block fblock) :: acc) cond

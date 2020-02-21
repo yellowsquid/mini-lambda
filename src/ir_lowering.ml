@@ -72,6 +72,7 @@ let rec flatten_expr env acc depth expr = match expr with
      let depth_acc = (depth + argc, [call']) in
      let acc' = List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list args)) in
      flatten_expr env (snd acc') depth callee
+  | ConstructorExpr _ -> failwith "todo: constructor in ir_lowering"
 and flatten_exprs env (depth, acc) expr = depth - 1, flatten_expr env acc depth expr
 
 let rec flatten_stmt env acc stmt =
@@ -80,7 +81,7 @@ let rec flatten_stmt env acc stmt =
   | ReturnStmt (_, e) -> flatten_expr env (Return (env.locals, env.args) :: acc) depth e
   | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
-  | MatchStmt _ -> failwith "todo"
+  | MatchStmt _ -> failwith "todo: match in ir_lowering"
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
      let tblock' = add_block (make_block env tblock continue) in

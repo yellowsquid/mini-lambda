@@ -13,6 +13,7 @@ type value
   | Bool of bool
   | Int of int
   | Lambda of (env * value array -> value)
+  | Enum of int * value array
 and env =
   { funcs: value array
   ; captures: value array
@@ -76,12 +77,13 @@ let rec interpret_expr env expr =
     | CallExpr(pos, callee, args) ->
        let callee' = interpret_expr env callee in
        let args' = Array.map (interpret_expr env) args in
-       match callee' with
+       (match callee' with
        | Lambda(f) -> f(env, args')
        | _ ->
           let ty_callee = value_to_string callee' in
           let msg = Printf.sprintf "type mismatch for call: got %s" ty_callee in
-          raise(Error(pos, msg))
+          raise(Error(pos, msg)))
+    | ConstructorExpr (_, _, _) -> failwith "todo: constructor in i0"
   in
   if env.debug then begin
       Typed_ast.pp_expr Format.std_formatter expr;
@@ -128,7 +130,7 @@ let rec interpret_stmt env stmt =
         Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e')
      );
      None
-  | MatchStmt _ -> failwith "todo"
+  | MatchStmt _ -> failwith "todo: match in i0"
   | IfStmt(pos, cond, then_block, else_block) ->
      (match interpret_expr env cond with
       | Bool(true) -> apply_block env then_block
@@ -213,8 +215,7 @@ let interpret debug program  =
             ; binds = Array.of_list []
             ; args = Array.of_list []
             ; debug = debug
-            }
-  in
+            } in
   let func_expr = Typed_ast.FuncExpr(Lexing.dummy_pos, main.id) in
   let args = Array.of_list [] in
   let call_expr = Typed_ast.CallExpr(Lexing.dummy_pos, func_expr, args) in

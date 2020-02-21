@@ -114,6 +114,7 @@ let rec eval_expr env expr cnt =
              match callee' with
              | Lambda f -> f env (List.rev args') cnt
              | _ -> failwith "expected lambda"))
+  | ConstructorExpr _ -> failwith "todo: constructor in i1"
 and eval_exprs env _ acc expr cnt = eval_expr env expr (fun value -> cnt (value :: acc))
 
 let rec eval_stmt env stmt cnt =
@@ -135,7 +136,7 @@ let rec eval_stmt env stmt cnt =
   (* Bind expression then continue on *)
   | BindStmt(_, id, e) ->
      eval_expr env e (fun e' -> Array.get env.binds id := e'; cnt None)
-  | MatchStmt _ -> failwith "todo"
+  | MatchStmt _ -> failwith "todo: match in i1"
   (* Evaluate condition then block. If block return then return, else continue on *)
   | IfStmt(_, cond, tblock, fblock) ->
      eval_expr env cond (fun cond' ->

@@ -10,13 +10,13 @@ type loc = Lexing.position
 
 type expr
   = IdentExpr of loc * string
-  | ConstructorExpr of loc * string
   | IntExpr of loc * int
   | BoolExpr of loc * bool
   | BinExpr of loc * Ops.bin_op * expr * expr
   | UnaryExpr of loc * Ops.unary_op * expr
   | LambdaExpr of loc * string list * expr
   | CallExpr of loc * expr * expr list
+  | ConstructorExpr of loc * string * expr list
 
 type pattern
   = Variable of loc * string

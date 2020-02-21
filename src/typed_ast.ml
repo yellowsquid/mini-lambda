@@ -21,6 +21,7 @@ type expr
   | UnaryExpr of loc * Ops.unary_op * expr
   | LambdaExpr of loc * int * expr array * expr
   | CallExpr of loc * expr * expr array
+  | ConstructorExpr of loc * id * expr array
 
 type pattern
   = Enum of loc * int * pattern list
@@ -84,6 +85,11 @@ let rec pp_expr ppf expr = match expr with
      list_sep ppf ();
      pp_list pp_expr ppf (Array.to_list args);
      Format.fprintf ppf ")@]"
+  | ConstructorExpr (_, variant, args) ->
+     Format.fprintf ppf "@[<4>ConstructorExpr(%d" variant;
+     list_sep ppf ();
+     pp_list pp_expr ppf (Array.to_list args);
+     Format.fprintf ppf ")@]"
 
 let rec pp_pattern ppf pattern = match pattern with
   | Enum (_, variant, patterns) ->
@@ -137,4 +143,18 @@ and pp_case ppf (_, pattern, stmts) =
   pp_pattern ppf pattern;
   list_sep ppf ();
   pp_list pp_stmt ppf stmts;
-  Format.fprintf ppf ")@]";
+  Format.fprintf ppf ")@]"
+
+let pp_func ppf func =
+  Format.fprintf ppf "@[<1>%s(%d,@ %d,@ %d" func.name func.id func.num_params func.num_locals;
+  if Option.is_some func.body then
+    (list_sep ppf (); pp_list pp_stmt ppf (Option.get func.body));
+  Format.fprintf ppf ")@]"
+
+let pp_prog ppf prog =
+  prog
+  |> Array.iter (fun group ->
+         group
+         |> Array.iter (fun func ->
+                pp_func ppf func;
+                Format.pp_print_newline ppf ()))

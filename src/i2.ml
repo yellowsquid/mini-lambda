@@ -78,13 +78,15 @@ let step config = match config with
   | Expr (cnts, env, CallExpr (_, callee, args)) ->
      Expr (CallCnt (env, Array.to_list args) :: cnts, env, callee)
 
+  | Expr (_, _, ConstructorExpr _) -> failwith "todo: constructor in i2"
+
   (* Calculate value then apply *)
   | Stmt (cnts, env, ReturnStmt (_, e)) -> Expr (cnts, env, e)
   (* Eval expression pop then continue *)
   | Stmt (cnts, env, ExprStmt (_, e)) -> Expr (IgnoreCnt :: cnts, env, e)
   (* Eval bind value then continue *)
   | Stmt (cnts, env, BindStmt (_, id, e)) -> Expr (BindCnt (env, id) :: cnts, env, e)
-  | Stmt (_, _, MatchStmt _) -> failwith "todo"
+  | Stmt (_, _, MatchStmt _) -> failwith "todo: match in i2"
   (* Eval condition then continue *)
   | Stmt (cnts, env, IfStmt (_, cond, tblock, fblock)) ->
      Expr (IfCnt (env, tblock, fblock) :: cnts, env, cond)

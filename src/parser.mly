@@ -125,13 +125,14 @@ unary_expr:
 
 postfix_expr:
   | primary_expr { $1 }
+  | TYPE { ConstructorExpr ($startpos, $1, []) }
+  | TYPE LPAREN separated_nonempty_list(COMMA, expr) RPAREN { ConstructorExpr ($startpos, $1, $3) }
   | callee = primary_expr; LPAREN args = separated_list(COMMA, expr); RPAREN
     { CallExpr ($startpos, callee, args) }
 
 primary_expr:
   | LPAREN expr RPAREN { $2 }
   | named { IdentExpr ($startpos, $1) }
-  | TYPE { ConstructorExpr ($startpos, $1) }
   | INT { IntExpr ($startpos, $1) }
   | TRUE { BoolExpr ($startpos, true) }
   | FALSE { BoolExpr ($startpos, false) }
