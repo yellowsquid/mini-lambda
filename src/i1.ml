@@ -13,15 +13,16 @@ type value
   | Bool of bool
   | Int of int
   | Lambda of (env -> value list -> (value -> value) -> value)
+  | Enum of int * value list
 and env =
   { funcs: value array
   ; captures: value array
-  ; binds: value ref array
+  ; binds: value array
   ; args: value array
   ; debug: bool
   }
 
-let value_to_string value = match value with
+let rec value_to_string value = match value with
   | None -> "!"
   | Break id -> Printf.sprintf "Break(%d)" id
   | Continue id -> Printf.sprintf "Continue(%d)" id
@@ -29,6 +30,9 @@ let value_to_string value = match value with
   | Bool(b) -> string_of_bool b
   | Int(i) -> string_of_int i
   | Lambda(_) -> "λ"
+  | Enum (var, params) ->
+     let params' = String.concat ", " ((string_of_int var) :: List.map value_to_string params) in
+     Printf.sprintf "Enum(%s)" params'
 
 let step = ref 0
 
@@ -61,52 +65,50 @@ let rec fold_left_cnt f acc list cnt = match list with
   | x :: rest -> f cnt acc x (fun acc' -> fold_left_cnt f acc' rest cnt)
 
 let print_cnt expr debug =
-  if debug then
-    let eval cnt value =
+  if debug
+  then
+    (fun cnt value ->
       pp_expr Format.std_formatter expr;
       Format.printf " -> %s" (value_to_string value);
       Format.print_newline ();
-      cnt value in
-    eval
+      cnt value)
   else
-    let eval cnt = cnt in
-    eval
+    (fun cnt -> cnt)
 
 let rec eval_expr env expr cnt =
   let cnt = print_cnt expr env.debug cnt in
   match expr with
   (* Push the func to stack top before applying *)
-  | FuncExpr(_, id) -> cnt (Array.get env.funcs id)
+  | FuncExpr (_, id) -> cnt env.funcs.(id)
   (* Push the local to stack top before applying *)
-  | EnvExpr(_, id) -> cnt (Array.get env.captures id)
+  | EnvExpr (_, id) -> cnt env.captures.(id)
   (* Push the local to stack top before applying *)
-  | BoundExpr(_, id) -> cnt !(Array.get env.binds id)
+  | BoundExpr (_, id) -> cnt env.binds.(id)
   (* Push the arg to stack top before applying *)
-  | ArgExpr(_, id) -> cnt (Array.get env.args id)
+  | ArgExpr (_, id) -> cnt env.args.(id)
   (* Push the int to stack top before applying *)
-  | IntExpr(_, i) -> cnt (Int i)
+  | IntExpr (_, i) -> cnt (Int i)
   (* Push the bool to stack top before applying *)
-  | BoolExpr(_, b) -> cnt (Bool b)
+  | BoolExpr (_, b) -> cnt (Bool b)
   (* Push first then second arg then do op before applying *)
-  | BinExpr(pos, op, lhs, rhs) ->
+  | BinExpr (pos, op, lhs, rhs) ->
      eval_expr env lhs (fun lhs' ->
          eval_expr env rhs (fun rhs' -> cnt (do_bin_op pos op lhs' rhs')))
   (* Push first then second arg then invert before applying *)
-  | UnaryExpr(pos, op, e) ->
+  | UnaryExpr (pos, op, e) ->
      eval_expr env e (fun e' -> cnt (do_unary_op pos op e'))
   (* Capture args then construct function before applying *)
-  | LambdaExpr(_, _, captures, body) ->
-     fold_left_cnt (eval_exprs env) [] (List.rev (Array.to_list captures)) (fun captures' ->
+  | LambdaExpr (_, _, captures, body) ->
+     fold_left_cnt (eval_exprs env) [] (captures |> Array.to_list |> List.rev) (fun captures' ->
          let eval env' args cnt' =
            let env'' = { funcs = env'.funcs
-                       ; captures = (Array.of_list captures')
+                       ; captures = Array.of_list captures'
                        ; binds = Array.of_list []
                        ; args = Array.of_list args
                        ; debug = env'.debug
                        } in
            eval_expr env'' body cnt' in
-         cnt (Lambda eval)
-       )
+         cnt (Lambda eval))
   (* Push function then args before calling and then applying *)
   | CallExpr(_, callee, args) ->
      eval_expr env callee (fun callee' ->
@@ -114,31 +116,61 @@ let rec eval_expr env expr cnt =
              match callee' with
              | Lambda f -> f env (List.rev args') cnt
              | _ -> failwith "expected lambda"))
-  | ConstructorExpr _ -> failwith "todo: constructor in i1"
+  (* Capture values before wrapping up *)
+  | ConstructorExpr (_, variant, args) ->
+     fold_left_cnt (eval_exprs env) [] (args |> Array.to_list |> List.rev) (fun args' ->
+         cnt (Enum (variant, args')))
 and eval_exprs env _ acc expr cnt = eval_expr env expr (fun value -> cnt (value :: acc))
 
+(* Evaluate patterns depth-first, left-to-right *)
+let rec eval_pattern env v pattern cnt =
+  if env.debug
+  then
+    (Format.printf "@[";
+     pp_pattern Format.std_formatter pattern;
+     Format.printf "@ <~>@ %s@]" (value_to_string v);
+     Format.print_newline ());
+  match v, pattern with
+  | Enum (var, params), Typed_ast.Enum (_, variant, patterns) when var = variant ->
+     fold_left_cnt eval_patterns (true, env) (List.combine params patterns) cnt
+  | _, Enum _ -> cnt (false, env)
+  | x, Variable (_, id) ->
+     let binds = Array.copy env.binds in
+     binds.(id) <- x;
+     let env' = { funcs = env.funcs
+                ; captures = env.captures
+                ; binds
+                ; args = env.args
+                ; debug = env.debug
+                } in
+     cnt (true, env')
+and eval_patterns escape (_, env) (v, pattern) cnt =
+  eval_pattern env v pattern (fun ((matched, _) as ret) -> if matched then cnt ret else escape ret)
+
 let rec eval_stmt env stmt cnt =
-  if env.debug then begin
-      incr step;
-      Format.printf "Step %d" !step;
-      Format.print_newline ();
-      pp_stmt Format.std_formatter stmt;
-      Format.print_newline ();
-      Format.print_newline ()
-    end;
+  if env.debug
+  then
+    (incr step;
+     Format.printf "Step %d" !step;
+     Format.print_newline ();
+     pp_stmt Format.std_formatter stmt;
+     Format.print_newline ();
+     Format.print_newline ());
   match stmt with
   (* Calculate return value then apply *)
-  | ReturnStmt(_, e) ->
+  | ReturnStmt (_, e) ->
      eval_expr env e cnt
   (* Eval expression then continue on *)
-  | ExprStmt(_, e) ->
+  | ExprStmt (_, e) ->
      eval_expr env e (fun _ -> cnt None)
   (* Bind expression then continue on *)
-  | BindStmt(_, id, e) ->
-     eval_expr env e (fun e' -> Array.get env.binds id := e'; cnt None)
-  | MatchStmt _ -> failwith "todo: match in i1"
+  | BindStmt (_, id, e) ->
+     eval_expr env e (fun e' -> env.binds.(id) <- e'; cnt None)
+  (* Eval expression then start matching cases *)
+  | MatchStmt (_, e, cases) ->
+     eval_expr env e (fun e' -> fold_left_cnt (eval_case env e') None cases cnt)
   (* Evaluate condition then block. If block return then return, else continue on *)
-  | IfStmt(_, cond, tblock, fblock) ->
+  | IfStmt (_, cond, tblock, fblock) ->
      eval_expr env cond (fun cond' ->
          let block = match cond' with
            | Bool true -> tblock
@@ -166,20 +198,37 @@ and eval_stmts env escape _ stmt cnt =
       match value with
       | None -> cnt None
       | x -> escape x)
+(* If a pattern matches, eval block and stop. Else continue *)
+and eval_case env e escape _ (_, pattern, block) cnt =
+  eval_pattern env e pattern (fun (matched, env') ->
+      if matched
+      then
+        (Array.iteri (Array.set env.binds) env'.binds;
+         fold_left_cnt (eval_stmts env) None block escape)
+      else cnt None)
 
 module FuncMap = Map.Make(String)
 
-let print_int _env x_list cnt = match x_list with
+let print_int _env list cnt = match list with
   | [Int x] -> print_int x; print_newline(); cnt Unit
-  | _ -> failwith "type mismatch"
+  | _ ->
+     let list = String.concat ", " (List.map value_to_string list) in
+     let msg = Format.sprintf "type mismatch for print_int: expected [int] got [%s]" list in
+     failwith msg
 
-let print_bool _env b_list cnt = match b_list with
+let print_bool _env list cnt = match list with
   | [Bool b] -> print_string (string_of_bool b); print_newline (); cnt Unit
-  | _ -> failwith "type mismatch"
+  | _ ->
+     let list = String.concat ", " (List.map value_to_string list) in
+     let msg = Format.sprintf "type mismatch for print_bool: expected [bool] got [%s]" list in
+     failwith msg
 
-let input_int _env empty_list cnt = match empty_list with
+let input_int _env list cnt = match list with
   | [] -> cnt (Int (read_int ()))
-  | _ -> failwith "type mismatch"
+  | _ ->
+     let list = String.concat ", " (List.map value_to_string list) in
+     let msg = Format.sprintf "type mismatch for input_int: expected [] got [%s]" list in
+     failwith msg
 
 let builtins = FuncMap.of_seq (List.to_seq [ "print_int", Lambda(print_int)
                                            ; "print_bool", Lambda(print_bool)
@@ -198,7 +247,7 @@ let interpret_func func =
       else
         let env' = { funcs = env.funcs
                    ; captures = Array.of_list []
-                   ; binds = Array.init func.num_locals (fun _ -> ref Unit)
+                   ; binds = Array.init func.num_locals (fun _ -> Unit)
                    ; args = Array.of_list args
                    ; debug = env.debug
                    } in
@@ -223,5 +272,5 @@ let interpret debug program =
   eval_expr env call_expr (fun x ->
       match x with
       | None -> None
-      | _ -> failwith "type mismatch")
+      | _ -> failwith "type mismatch on program termination")
 |> ignore

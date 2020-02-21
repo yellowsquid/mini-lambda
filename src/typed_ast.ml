@@ -97,7 +97,7 @@ let rec pp_pattern ppf pattern = match pattern with
      list_sep ppf ();
      pp_list pp_pattern ppf patterns;
      Format.fprintf ppf ")@]"
-  | Variable (_, id) -> Format.fprintf ppf "%d" id
+  | Variable (_, id) -> Format.fprintf ppf "*%d" id
 
 let rec pp_stmt ppf stmt = match stmt with
   | ReturnStmt (_, expr) ->

@@ -85,9 +85,9 @@ let rec interpret_expr env expr =
            let ty_callee = value_to_string callee' in
            let msg = Printf.sprintf "type mismatch for call: got %s" ty_callee in
            raise (Error (pos, msg)))
-    | ConstructorExpr (_, variant, exprs) ->
-       let exprs' = Array.map (interpret_expr env) exprs in
-       Enum (variant, exprs') in
+    | ConstructorExpr (_, variant, args) ->
+       let args' = Array.map (interpret_expr env) args in
+       Enum (variant, args') in
   if env.debug
   then
       (Typed_ast.pp_expr Format.std_formatter expr;
@@ -117,10 +117,10 @@ and eval_lambda env params captures body  =
 
 let rec pattern_matches env v pattern = match v, pattern with
   | Enum (var, params), Typed_ast.Enum (_, variant, patterns) when var = variant ->
-     List.fold_left2 (fun (matched, env) v pattern ->
+     List.fold_left2 (fun (matched, env') v pattern ->
          if matched
-         then pattern_matches env v pattern
-         else false, env) (true, env) (Array.to_list params) patterns
+         then pattern_matches env' v pattern
+         else false, env') (true, env) (Array.to_list params) patterns
   | _, Enum _ -> false, env
   | x, Variable (_, id) ->
      let binds = Array.copy env.binds in
@@ -149,8 +149,7 @@ let rec interpret_stmt env stmt =
      let e' = interpret_expr env e in
      env.binds.(id) <- e';
      (if env.debug then
-        Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e')
-     );
+        Format.printf "Bound(%d) <- %s@\n@\n" id (value_to_string e'));
      None
   | MatchStmt (_, e, cases) ->
      let e' = interpret_expr env e in
@@ -198,14 +197,14 @@ module FuncMap = Map.Make(String)
 let print_int (_env, x_array) =
   if Array.length x_array != 1 then
     failwith "wrong number of args"
-  else match Array.get x_array 0 with
+  else match x_array.(0) with
        | Int(x) -> print_int x; print_newline (); Unit
        | _ -> failwith "type mismatch"
 
 let print_bool (_env, b_array) =
   if Array.length b_array != 1 then
     failwith "wrong number of args"
-  else match Array.get b_array 0 with
+  else match b_array.(0) with
        | Bool(b) -> print_string (string_of_bool b); print_newline (); Unit
        | _ -> failwith "type mismatch"
 
