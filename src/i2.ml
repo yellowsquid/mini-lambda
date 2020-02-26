@@ -11,10 +11,12 @@ type value
   | Func of int * int * statement list
   | Lambda of int * value array * expr
   | Builtin of (value list -> value)
+  | Enum of int * value list
+  | Match of env option
 and env =
   { funcs: value array
   ; captures: value array
-  ; binds: value ref array
+  ; binds: value array
   ; args: value array
   }
 
@@ -25,8 +27,12 @@ type cnt
   | LambdaCnt of env * expr list * value list * int * expr
   | CallCnt of env * expr list
   | ArgsCnt of env * expr list * value list * value
+  | ConstructorCnt of env * expr list * value list * id
   | IgnoreCnt
   | BindCnt of env * id
+  | MatchCnt of env * case list
+  | CasesCnt of env * case list * value
+  | PatternsCnt of value list * pattern list
   | IfCnt of env * statement list * statement list
   | WhileCnt of env * id * expr * statement list * statement list
   | ContinueCnt of id
@@ -54,13 +60,13 @@ let do_unary_op op e = match op, e with
 
 let step config = match config with
   (* Push function to top before applying *)
-  | Expr (cnts, env, FuncExpr (_, id)) -> Apply (cnts, Array.get env.funcs id)
+  | Expr (cnts, env, FuncExpr (_, id)) -> Apply (cnts, env.funcs.(id))
   (* Push local to top before applying *)
-  | Expr (cnts, env, EnvExpr (_, id)) -> Apply (cnts, Array.get env.captures id)
+  | Expr (cnts, env, EnvExpr (_, id)) -> Apply (cnts, env.captures.(id))
   (* Push local to top before applying *)
-  | Expr (cnts, env, BoundExpr (_, id)) -> Apply (cnts, !(Array.get env.binds id))
+  | Expr (cnts, env, BoundExpr (_, id)) -> Apply (cnts, env.binds.(id))
   (* Push arg to top before applying *)
-  | Expr (cnts, env, ArgExpr (_, id)) -> Apply (cnts, Array.get env.args id)
+  | Expr (cnts, env, ArgExpr (_, id)) -> Apply (cnts, env.args.(id))
   (* Push int to top before applying *)
   | Expr (cnts, _, IntExpr (_, i)) -> Apply (cnts, Int i)
   (* Push bool to top before applying *)
@@ -78,7 +84,9 @@ let step config = match config with
   | Expr (cnts, env, CallExpr (_, callee, args)) ->
      Expr (CallCnt (env, Array.to_list args) :: cnts, env, callee)
 
-  | Expr (_, _, ConstructorExpr _) -> failwith "todo: constructor in i2"
+  (* Prepare to capture args *)
+  | Expr (cnts, env, ConstructorExpr (_, variant, params)) ->
+     Apply (ConstructorCnt (env, Array.to_list params, [], variant) :: cnts, None)
 
   (* Calculate value then apply *)
   | Stmt (cnts, env, ReturnStmt (_, e)) -> Expr (cnts, env, e)
@@ -86,7 +94,8 @@ let step config = match config with
   | Stmt (cnts, env, ExprStmt (_, e)) -> Expr (IgnoreCnt :: cnts, env, e)
   (* Eval bind value then continue *)
   | Stmt (cnts, env, BindStmt (_, id, e)) -> Expr (BindCnt (env, id) :: cnts, env, e)
-  | Stmt (_, _, MatchStmt _) -> failwith "todo: match in i2"
+  (* Eval condition then continue *)
+  | Stmt (cnts, env, MatchStmt (_, e, cases)) -> Expr (MatchCnt (env, cases) :: cnts, env, e)
   (* Eval condition then continue *)
   | Stmt (cnts, env, IfStmt (_, cond, tblock, fblock)) ->
      Expr (IfCnt (env, tblock, fblock) :: cnts, env, cond)
@@ -136,7 +145,7 @@ let step config = match config with
        when params = List.length parsed ->
      let env' = { funcs = env.funcs
                 ; captures = Array.of_list []
-                ; binds = Array.init binds (fun _ -> ref None)
+                ; binds = Array.init binds (fun _ -> None)
                 ; args = Array.of_list (List.rev parsed)
                 }
      in Apply (SeqCnt (env', body) :: rest, None)
@@ -151,10 +160,58 @@ let step config = match config with
   | Apply (ArgsCnt (env, exprs, parsed, callee) :: rest, v) ->
      Apply (ArgsCnt (env, exprs, v :: parsed, callee) :: rest, None)
 
+  (* All params captured so push and apply next *)
+  | Apply (ConstructorCnt (_, [], params, variant) :: rest, None) ->
+     Apply (rest, Enum (variant, List.rev params))
+  (* Evaluate the next parameter *)
+  | Apply (ConstructorCnt (env, e :: exprs, params, variant) :: rest, None) ->
+     Expr (ConstructorCnt (env, exprs, params, variant) :: rest, env, e)
+  | Apply (ConstructorCnt (env, exprs, params, variant) :: rest, v) ->
+     Apply (ConstructorCnt (env, exprs, v :: params, variant) :: rest, None)
+
   (* Ignore value and apply to None *)
   | Apply (IgnoreCnt :: rest, _) -> Apply (rest, None)
   (* Bind value and apply to None *)
-  | Apply (BindCnt (env, id) :: rest, x) -> Array.get env.binds id := x; Apply (rest, None)
+  | Apply (BindCnt (env, id) :: rest, x) ->
+     env.binds.(id) <- x;
+     Apply (rest, None)
+
+  (* Prepare to match cases *)
+  | Apply (MatchCnt (env, cases) :: rest, v) ->
+     Apply (CasesCnt (env, cases, v) :: rest, None)
+
+  (* All cases failed so continue *)
+  | Apply (CasesCnt (_, [], _) :: rest, None) -> Apply (rest, None)
+  (* Try to match the next case *)
+  | Apply ((CasesCnt (env, (_, pat, _) :: _, v) as self) :: rest, None) ->
+     let binds = Array.copy env.binds in
+     let env' = { funcs = env.funcs
+                ; captures = env.captures
+                ; binds
+                ; args = env.args
+                } in
+     Apply (PatternsCnt ([v], [pat]) :: self :: rest, Match (Some env'))
+  (* Match succeeded so apply block *)
+  | Apply (CasesCnt (env, (_, _, block) :: _, _) :: rest, Match (Some env')) ->
+     Array.iteri (Array.set env.binds) env'.binds;
+     Apply (SeqCnt (env, block) :: rest, None)
+  (* Match failed so next case *)
+  | Apply (CasesCnt (env, _ :: cases, v) :: rest, Match (None)) ->
+     Apply (CasesCnt (env, cases, v) :: rest, None)
+
+  (* All matches succeeded so return *)
+  | Apply (PatternsCnt ([], []) :: rest, Match (Some env)) -> Apply (rest, Match (Some env))
+  (* Match variable binds and continues *)
+  | Apply (PatternsCnt (v :: vs, Variable (_, id) :: pats) :: rest, Match (Some env)) ->
+     env.binds.(id) <- v;
+     Apply (PatternsCnt (vs, pats) :: rest, Match (Some env))
+  (* Match enum matches variant and recursively matches params *)
+  | Apply (PatternsCnt (Enum (var, params) :: vs, Typed_ast.Enum (_, evar, epats) :: pats) :: rest,
+           Match (Some env)) when var = evar ->
+     Apply (PatternsCnt (params @ vs, epats @ pats) :: rest, Match (Some env))
+  (* Match enum wrong variant fails immediately *)
+  | Apply (PatternsCnt (Enum _ :: _, _) :: rest, _) -> Apply (rest, Match None)
+
   (* If condition was true then evaluate tblock *)
   | Apply (IfCnt (env, tblock, _) :: rest, Bool true) -> Apply (SeqCnt (env, tblock) :: rest, None)
   (* If condition was false then evaluate fblock *)
