@@ -19,6 +19,8 @@ type stack_value
 
 type heap_value
   = Sized of stack_value
+  (* variant * #params *)
+  | Enum of int * int
   (* #locals * block *)
   | Func of int * int
 
@@ -27,31 +29,39 @@ type directive
   = BinOp of bin_op
   (* Unary of of a value *)
   | UnaryOp of unary_op
-  (* Allocates space and pushes to heap. *)
-  (* Parts are stack elements to move and heap value *)
-  | AllocHeap of int * heap_value
-  (* Copies local values from heap onto stack. *)
-  | CopyLocals of env
   (* Pushes function *)
   | PushFunc of int
   (* Pushes stack value, relative to top *)
   | PushStack of int
   (* Pushes constant value *)
   | Push of stack_value
-  (* Pops value *)
-  | Pop
+  (* Allocates space and pushes to heap. *)
+  (* Parts are stack elements to move and heap value *)
+  | AllocHeap of int * heap_value
   (* Calls builtin function *)
   | Builtin of string
   (* Calls function: #args * return block *)
   | Call of int * int
+  (* Allocate space on the stack. *)
+  | AllocStack of int
+  (* Copies local values from heap onto stack. *)
+  | CopyLocals of env
   (* Jumps to address and cleans up env  *)
   | Return of env
-  (* Jumps to constant block *)
-  | Jump of int
+  (* Pops value *)
+  | Pop
   (* Binds local to value *)
   | Bind of int
+  (* Creates environment for pattern matching *)
+  | Case of int
+  (* Pattern matching enum: variant * pattern depth * next case. Pattern depth excludes stack top *)
+  | PatternEnum of int * int * int option
+  (* Indicates end of pattern matching *)
+  | PatternEnd of int
   (* Conditional jump: true block * false block *)
   | If of int * int
+  (* Jumps to constant block *)
+  | Jump of int
 
 module BlockMap = Map.Make(Int)
 module FuncMap = Map.Make(String)
@@ -69,7 +79,14 @@ let do_unary_op op e = match op, e with
   | Invert, Bool b -> Bool (not b)
   | _, _ -> failwith "runtime error: bad args for unary op"
 
+(*** Printing ***)
+
 let list_sep ppf _ = Format.fprintf ppf ",@ "
+
+let pp_list pp ppf list =
+  Format.fprintf ppf "@[<1>(";
+  Format.pp_print_list ~pp_sep:list_sep pp ppf list;
+  Format.fprintf ppf ")@]"
 
 let pp_stack_value ppf value = match value with
   | Unit -> Format.fprintf ppf "()"
@@ -77,47 +94,45 @@ let pp_stack_value ppf value = match value with
   | Int i -> Format.fprintf ppf "%d" i
   | CodeIndex i -> Format.fprintf ppf "@%d" i
   | HeapIndex i -> Format.fprintf ppf "*%d" i
-
-let pp_stack_value_list ppf values =
-  Format.fprintf ppf "@[<1>(";
-  Format.pp_print_list ~pp_sep:list_sep pp_stack_value ppf (List.map (!) values);
-  Format.fprintf ppf ")@]"
+let pp_stack_value_list ppf values = values |> List.map (!) |> pp_list pp_stack_value ppf
 
 let pp_heap_value ppf value = match value with
   | Sized v -> pp_stack_value ppf v
+  | Enum (variant, params) -> Format.fprintf ppf "Enum(%d, %d)" variant params
   | Func (locals, body) -> Format.fprintf ppf "Func(%d, %d)" locals body
-
-let pp_heap_value_list ppf values =
-  Format.fprintf ppf "@[<1>(";
-  Format.pp_print_list ~pp_sep:list_sep pp_heap_value ppf (List.map (!) values);
-  Format.fprintf ppf ")@]"
+let pp_heap_value_list ppf values = values |> List.map (!) |> pp_list pp_heap_value ppf
 
 let rec pp_directive ppf directive = match directive with
   | BinOp op -> Format.fprintf ppf "BinOp(%s)" (string_of_bin_op op)
   | UnaryOp op -> Format.fprintf ppf "UnaryOp(%s)" (string_of_unary_op op)
-  | CopyLocals env -> Format.fprintf ppf "CopyLocals(%d, %d)" env.locals env.args
-  | AllocHeap (i, v) ->
-     Format.fprintf ppf "@[<4>AllocHeap(%d,@ " i;
-     pp_heap_value ppf v;
-     Format.fprintf ppf ")@]"
   | PushFunc i -> Format.fprintf ppf "PushFunc(%d)" i
   | PushStack i -> Format.fprintf ppf "PushStack(%d)" i
   | Push v ->
      Format.fprintf ppf "@[<4>Push(";
      pp_stack_value ppf v;
      Format.fprintf ppf ")@]"
-  | Pop -> Format.fprintf ppf "Pop"
+  | AllocHeap (i, v) ->
+     Format.fprintf ppf "@[<4>AllocHeap(%d,@ " i;
+     pp_heap_value ppf v;
+     Format.fprintf ppf ")@]"
   | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
   | Call (args, return) -> Format.fprintf ppf "Call(%d, %d)" args return
+  | AllocStack locals -> Format.fprintf ppf "AllocStack(%d)" locals
+  | CopyLocals env -> Format.fprintf ppf "CopyLocals(%d, %d)" env.locals env.args
   | Return env -> Format.fprintf ppf "Return(%d, %d)" env.locals env.args
-  | Jump block -> Format.fprintf ppf "Jump(%d)" block
+  | Pop -> Format.fprintf ppf "Pop"
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
+  | Case depth -> Format.fprintf ppf "Case(%d)" depth
+  | PatternEnum (var, depth, None) -> Format.fprintf ppf "PatternEnum(%d, %d)" var depth
+  | PatternEnum (var, depth, Some block) ->
+     Format.fprintf ppf "PatternEnum(%d, %d, %d)" var depth block
+  | PatternEnd depth -> Format.fprintf ppf "PatternEnd(%d)" depth
   | If (tblock, fblock) ->
      Format.fprintf ppf "If(%d, %d)" tblock fblock
-and pp_directive_list ppf directives =
-  Format.fprintf ppf "@[<1>(";
-  Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
-  Format.fprintf ppf ")@]"
+  | Jump block -> Format.fprintf ppf "Jump(%d)" block
+and pp_directive_list ppf directives = pp_list pp_directive ppf directives
+
+(*** Builtins ***)
 
 let print_int stack = match stack with
   | _ :: { contents = Int x } :: _ ->
@@ -140,6 +155,8 @@ let builtins = FuncMap.of_seq (List.to_seq [ "print_int", (print_int, 1)
                                            ; "input_int", (input_int, 0)])
 
 let funcs = ref (Array.of_list [])
+
+(*** Utilities ***)
 
 let rec cleanup directives cnt = match directives with
   | [] -> cnt []
@@ -177,6 +194,8 @@ let add_block, get_block, flatten_blocks, reserve_loop, get_loop, get_continue, 
     cleanup block (fun block' -> blocks := BlockMap.add (get_loop id) block' !blocks) in
   eval_add, eval_get, eval_flattens, reserve_loop, get_loop, get_continue, set_loop
 
+(*** Construction ***)
+
 (* Stack is args, return address, locals, temp, ... *)
 (* Depth points to return address *)
 let rec flatten_expr env acc depth expr = match expr with
@@ -193,18 +212,36 @@ let rec flatten_expr env acc depth expr = match expr with
      let capturec = Array.length captures in
      let env' = { locals = capturec; args = params } in
      let body' = add_block (CopyLocals env' :: flatten_expr env' [Return env'] capturec body) in
-     let acc' = AllocHeap (capturec, Func (Array.length captures, body')) :: acc in
+     let acc' = AllocHeap (capturec, Func (capturec, body')) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
-     snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
+     captures |> Array.to_list |> List.rev |> List.fold_left (flatten_exprs env) depth_acc |> snd
   | CallExpr (_, callee, args) ->
      let return = add_block acc in
      let argc = Array.length args in
      let call' = Call (argc, return) in
      let depth_acc = (depth + argc, [call']) in
-     let acc' = List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list args)) in
-     flatten_expr env (snd acc') depth callee
-  | ConstructorExpr _ -> failwith "todo: constructor in i6"
+     let acc' =
+       args
+       |> Array.to_list
+       |> List.rev
+       |> List.fold_left (flatten_exprs env) depth_acc
+       |> snd in
+     flatten_expr env acc' depth callee
+  | ConstructorExpr (_, variant, params) ->
+     let paramc = Array.length params in
+     let acc' = AllocHeap (paramc, Enum(variant, paramc)) :: acc in
+     let depth_acc = (depth + paramc - 1, acc') in
+     params |> Array.to_list |> List.rev |> List.fold_left (flatten_exprs env) depth_acc |> snd
 and flatten_exprs env (depth, acc) expr = depth - 1, flatten_expr env acc depth expr
+
+(* For patterns, depth doesn't include matched value. *)
+let rec flatten_pattern next depth acc pattern = match pattern with
+  | Variable (_, id) -> Bind (depth - id) :: acc
+  | Enum (_, var, patterns) ->
+     let depth_acc = (depth, acc) in
+     let acc' = patterns |> List.rev |> List.fold_left (flatten_patterns next) depth_acc |> snd in
+     PatternEnum (var, depth, next) :: acc'
+and flatten_patterns next (depth, acc) pattern = depth + 1, flatten_pattern next depth acc pattern
 
 let rec flatten_stmt env acc stmt =
   let depth = env.locals in
@@ -212,7 +249,10 @@ let rec flatten_stmt env acc stmt =
   | ReturnStmt (_, e) -> flatten_expr env (Return env :: acc) depth e
   | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
-  | MatchStmt _ -> failwith "todo: match in i6"
+  | MatchStmt (_, e, cases) ->
+     let continue = add_block acc in
+     let first_case, _ = List.fold_left (flatten_case env) (None, continue) (List.rev cases) in
+     flatten_expr env [Jump (Option.get first_case)] depth e
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
      let tblock' = add_block (make_block env tblock continue) in
@@ -230,6 +270,25 @@ let rec flatten_stmt env acc stmt =
   | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block env stmts acc =
   List.fold_left (flatten_stmt env) acc (List.rev stmts)
+and flatten_case env (next, continue) (_, pattern, block) =
+  let block' = PatternEnd env.locals :: make_block env block [Jump continue] in
+  let id = add_block (Case env.locals :: flatten_pattern next env.locals block' pattern) in
+  Some id, continue
+
+let flatten_func func =
+  if Option.is_none func.body then
+    if FuncMap.mem func.name builtins then
+      let _, params = FuncMap.find func.name builtins in
+      let env = { locals = 0; args = params } in
+      add_block [Builtin func.name; Return env]
+    else
+      failwith "built-in has no definition"
+  else
+    let env = { locals = func.num_locals; args = func.num_params } in
+    let block = make_block env (Option.get func.body) [Push Unit; Return env] in
+    add_block (AllocStack env.locals :: block)
+
+(*** Evaluation ***)
 
 let rec sublist base count list =
   if count = 0
@@ -237,21 +296,28 @@ let rec sublist base count list =
   else (List.nth list base) :: (sublist (base + 1) (count - 1) list)
 
 let unwrap base count heap =
-  List.map (fun v ->
-      match !v with
-      | Sized v' -> ref v'
-      | _ -> failwith "runtime error: can't unwrap heap value") (sublist base count heap)
+  sublist base count heap
+  |> List.map (fun v ->
+         match !v with
+         | Sized v' -> ref v'
+         | _ -> failwith "runtime error: can't unwrap heap value")
 
 let wrap data = List.map (fun v -> ref (Sized !v)) data
 
 let split n stack =
   let rec iter n stack cnt = match n, stack with
     | 0, _ -> cnt [] stack
-    | _, v :: rest -> iter (n - 1) rest (fun acc rest' -> cnt (v :: acc) rest')
+    | _, v :: rest -> iter (n - 1) rest (fun acc rest' -> cnt (ref !v :: acc) rest')
     | _, _ -> failwith "runtime error: not enough stack to split"
   in iter n stack (fun acc rest -> acc, rest)
 
 let drop n stack = snd (split n stack)
+
+let rec assign base values stack = match values with
+  | [] -> ()
+  | v :: rest ->
+     (List.nth stack base) := !v;
+     assign (base + 1) rest stack
 
 let step directives values heap = match directives, values with
   | [], values -> [], values, heap
@@ -259,29 +325,36 @@ let step directives values heap = match directives, values with
   | [Call (args, return)], _ ->
      (match !(List.nth values args) with
       | HeapIndex i ->
-      (match !(List.nth heap i) with
-       | Func (_, body) ->
-          get_block body, ref (CodeIndex return) :: values, heap
-       | _ -> failwith "runtime error: heap item not function")
+         (match !(List.nth heap i) with
+          | Func (_, body) ->
+             get_block body, ref (CodeIndex return) :: values, heap
+          | _ -> failwith "runtime error: heap item not function")
       | _ -> failwith "runtime error: callee not on heap")
   | [Return env], value :: values' ->
      let return, values'' = match drop env.locals values' with
        | { contents = CodeIndex i } :: rest -> i, drop (env.args + 1) rest
        | _ -> failwith "runtime error: stack frame formatted wrong" in
      get_block return, value :: values'', heap
-  | [Jump block], _ -> get_block block, values, heap
 
   | [If (tblock, _)], { contents = Bool true } :: values' -> get_block tblock, values', heap
   | [If (_, fblock)], { contents = Bool false } :: values' -> get_block fblock, values', heap
 
+  | [Jump block], _ -> get_block block, values, heap
+
   | BinOp op :: rest, rhs :: lhs :: values' -> rest, ref (do_bin_op op !lhs !rhs) :: values', heap
   | UnaryOp op :: rest, v :: values' -> rest, ref (do_unary_op op !v) :: values', heap
+
+  | PushFunc id :: rest, _ -> rest, ref (HeapIndex (!funcs).(id)) :: values, heap
+  | PushStack pos :: rest, _ -> rest, ref !(List.nth values pos) :: values, heap
+  | Push v :: rest, _ -> rest, ref v :: values, heap
 
   | AllocHeap (ncopy, value) :: rest, _ ->
      let out = List.length heap in
      let data, values' = split ncopy values in
      rest, ref (HeapIndex out) :: values', heap @ (ref value :: wrap data)
 
+  | Builtin name :: rest, _ -> rest, (fst (FuncMap.find name builtins)) values, heap
+  | AllocStack locals :: rest, _ -> rest, List.init locals (fun _ -> ref Unit) @ values, heap
   | CopyLocals env :: rest, _ ->
      (match !(List.nth values (env.args + 1)) with
       | HeapIndex i ->
@@ -289,68 +362,64 @@ let step directives values heap = match directives, values with
          rest, locals' @ values, heap
       | _ -> failwith "runtime error: callee not on heap")
 
-  | PushFunc id :: rest, _ ->
-     rest, ref (HeapIndex (Array.get !funcs id)) :: values, heap
-  | PushStack pos :: rest, _ -> rest, List.nth values pos :: values, heap
-  | Push v :: rest, _ -> rest, ref v :: values, heap
   | Pop :: rest, _ :: values' -> rest, values', heap
+  | Bind n :: rest, v :: values' -> assign (n - 1) [v] values'; rest, values', heap
 
-  | Builtin name :: rest, _ -> rest, (fst (FuncMap.find name builtins)) values, heap
+  | Case depth :: rest, v :: _ -> rest, ref !v :: sublist 1 depth values @ values, heap
+  | PatternEnum (pvar, depth, next) :: rest, { contents = HeapIndex i } :: values' ->
+     (match !(List.nth heap i) with
+      | Enum (evar, paramc) when pvar = evar ->
+         rest, (unwrap (i + 1) paramc heap |> List.rev) @ values', heap
+      | Enum _ ->
+         let values'' = drop depth values' in
+         (match next with
+          | Some block -> get_block block, values'', heap
+          | None -> failwith "runtime error: cases not exhaustive")
+      | _ -> failwith "runtime error: enum match with not an enum")
+  | PatternEnd depth :: rest, _ ->
+     let binds, values' = split depth values in
+     let values'' = drop 1 values' in
+     assign 0 binds values'';
+     rest, values'', heap
 
-  | Bind n :: rest, v :: values' ->
-     (List.nth values' (n - 1)) := !v; rest, values', heap
   | _, _ -> failwith "runtime error: invalid operation"
 
 let stage = ref 0
 
 let driver debug stack directives heap =
   let rec iter (directives, values, heap) =
-    if debug then begin
-        incr stage;
-        Format.fprintf Format.std_formatter "@[<4>Step %d: (@," !stage;
-        pp_directive_list Format.std_formatter directives;
-        Format.fprintf Format.std_formatter ",@ @,";
-        pp_stack_value_list Format.std_formatter values;
-        Format.fprintf Format.std_formatter ",@ @,";
-        pp_heap_value_list Format.std_formatter heap;
-        Format.fprintf Format.std_formatter ")@]";
-        Format.pp_print_newline Format.std_formatter ();
-      end;
+    if debug
+    then
+      (let ppf = Format.std_formatter in
+       incr stage;
+       Format.fprintf ppf "@[<4>Step %d:@ " !stage;
+       pp_directive_list ppf directives;
+       list_sep ppf ();
+       pp_stack_value_list ppf values;
+       list_sep ppf ();
+       pp_heap_value_list ppf heap;
+       Format.fprintf ppf "@]";
+       Format.pp_print_newline ppf ());
     match directives with
     | [] -> values
     | _ -> iter (step directives values heap) in
   iter (directives, stack, heap)
 
-
-let interpret_func func =
-  if Option.is_none func.body then
-    if FuncMap.mem func.name builtins then
-      let _, params = FuncMap.find func.name builtins in
-      let env = { locals = 0; args = params } in
-      0, add_block [Builtin func.name; Return env]
-    else
-      failwith "built-in has no definition"
-  else
-    let env = { locals = func.num_locals; args = func.num_params } in
-    let block = make_block env (Option.get func.body) [Push Unit; Return env] in
-    let block' = add_block (CopyLocals env :: block) in
-    func.num_locals, block'
-
-let heapify_func heap (locals, block) =
+let heapify_func heap block =
   let out = List.length !heap in
-  let values = ref (Func (locals, block)) :: (List.init locals (fun _ -> ref (Sized Unit))) in
+  let values = [ref (Func (0, block))] in
   heap := !heap @ values;
   out
 
 let interpret debug program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun a b -> compare a.id b.id) program';
-  let raw_funcs = Array.map interpret_func program' in
+  let raw_funcs = Array.map flatten_func program' in
   let heap = ref [] in
   funcs := Array.map (heapify_func heap) raw_funcs;
   let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
-  let main_ptr = Array.get !funcs main.id in
+  let main_ptr = (!funcs).(main.id) in
   let stack = [ref (CodeIndex 0); ref (HeapIndex main_ptr)] in
-  match driver debug stack (get_block (snd (Array.get raw_funcs main.id))) !heap with
+  match (raw_funcs.(main.id) |> get_block |> driver debug stack) !heap with
   | [{ contents = Unit }] -> ()
   | _ -> failwith "runtime error: didn't return unit"
