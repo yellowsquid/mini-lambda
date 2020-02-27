@@ -1,3 +1,7 @@
+(* Linear code interpretter.
+ *
+ * Code is no longer a stack and is instead split into blocks. *)
+
 open Typed_ast
 open Ops
 

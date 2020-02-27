@@ -1,4 +1,4 @@
-(* OCaml interpretter for language *)
+(* CPS interpretter. Everything is a continuation. *)
 
 open Typed_ast
 open Ops
@@ -247,7 +247,7 @@ let interpret_func func =
       else
         let env' = { funcs = env.funcs
                    ; captures = Array.of_list []
-                   ; binds = Array.init func.num_locals (fun _ -> Unit)
+                   ; binds = Array.make func.num_locals Unit
                    ; args = Array.of_list args
                    ; debug = env.debug
                    } in
@@ -273,4 +273,4 @@ let interpret debug program =
       match x with
       | None -> None
       | _ -> failwith "type mismatch on program termination")
-|> ignore
+  |> ignore

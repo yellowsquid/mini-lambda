@@ -1,4 +1,7 @@
-(* OCaml interpretter for language *)
+(* Defunctionalised and tagged interpretter.
+ *
+ * Continuations are first defunctionalised.
+ * Chains are flattened into a global stack of continuations. *)
 
 open Typed_ast
 open Ops

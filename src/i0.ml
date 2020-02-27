@@ -1,4 +1,4 @@
-(* OCaml interpretter for language *)
+(* High-level interpretter *)
 
 open Typed_ast
 open Ops
@@ -232,7 +232,7 @@ let interpret_func (func: Typed_ast.func) =
       else
         let env' = { funcs = env.funcs
                    ; captures = Array.of_list []
-                   ; binds = Array.init func.num_locals (fun _ -> Unit)
+                   ; binds = Array.make func.num_locals Unit
                    ; args = args
                    ; debug = env.debug
                    }
@@ -254,4 +254,4 @@ let interpret debug program  =
   let func_expr = Typed_ast.FuncExpr(Lexing.dummy_pos, main.id) in
   let args = Array.of_list [] in
   let call_expr = Typed_ast.CallExpr(Lexing.dummy_pos, func_expr, args) in
-  (ignore (interpret_expr env call_expr))
+  interpret_expr env call_expr |> ignore

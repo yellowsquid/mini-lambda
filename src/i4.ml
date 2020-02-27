@@ -1,3 +1,8 @@
+(* IR-based interpretter.
+ *
+ * Expressions and statements are converted to directives.
+ * Then you execute the directives. *)
+
 open Typed_ast
 open Ops
 

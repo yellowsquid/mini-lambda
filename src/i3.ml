@@ -1,3 +1,7 @@
+(* Three-stack interpretter.
+ *
+ * A stack for directives, values and environments. *)
+
 open Typed_ast
 open Ops
 
@@ -188,6 +192,7 @@ let step directives values envs = match directives, values, envs with
   | Expr (CallExpr (_, callee, args)) :: rest, _, _ ->
      let evaled_args = List.map (fun e -> Expr e) (Array.to_list args) in
      Expr callee :: evaled_args @ (Call (Array.length args) :: PopEnv :: rest), values, envs
+  (* Evaluate parameters then make the constructor *)
   | Expr (ConstructorExpr (_, variant, params)) :: rest, _, _ ->
      let evaled_params = List.map (fun e -> Expr e) (Array.to_list params) in
      evaled_params @ (Constructor (variant, Array.length params) :: rest), values, envs

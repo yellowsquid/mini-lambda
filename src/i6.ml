@@ -1,3 +1,7 @@
+(* Stack-machine interpretter.
+ *
+ * One shared stack for values and environment, with a separate heap. *)
+
 open Typed_ast
 open Ops
 
