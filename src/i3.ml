@@ -303,7 +303,6 @@ let step directives values envs = match directives, values, envs with
   (* Not reached end of match so continue jumping. *)
   | SkipMatch id :: _ :: rest, _, _ -> SkipMatch id :: rest, values, envs
 
-
   (* While condition was true so start loop *)
   | While (_, _, lblock, _) :: _, Bool true :: values', _ -> lblock @ directives, values', envs
   (* While condition was false so enter end block *)

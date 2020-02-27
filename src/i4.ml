@@ -13,29 +13,41 @@ type directive
   | PushLocal of int
   | PushArg of int
   | Push of value
-  | Pop
-  | PopEnv
-  | Seq
-  | Continue of int
-  | Break of int
-  | BlockEnd
   (* Params * Locals * Body *)
   | Capture of int * int * directive list
   | Builtin of string
   | Call of int
+  | PopEnv
+  (* Variant * Params *)
+  | Constructor of int * int
+  | Pop
   | Bind of int
+  | Match of id
+  | Case of id * directive list * directive list
+  | PatternVar of int
+  | PatternEnum of id
+  | SkipCase
+  | SkipMatch of id
+  | EndMatch of id
   | If of directive list * directive list
   | While of id * directive list * directive list * directive list
+  | Continue of int
+  | Break of int
+  | Seq
+  | BlockEnd
 and value
   = None
   | Unit
   | Bool of bool
   | Int of int
+  (* Variant * Params *)
+  | Enum of int * value list
   (* Params * Locals * Body *)
   | Func of int * value list  * directive list
+  | MatchTag of id
 and env =
   { locals: int
-  ; stack: value ref array
+  ; stack: value array
   }
 
 module FuncMap = Map.Make(String)
@@ -53,6 +65,8 @@ let do_unary_op op e = match op, e with
   | Invert, Bool b -> Bool (not b)
   | _, _ -> failwith "runtime error"
 
+(*** Printing ***)
+
 let list_sep ppf _ = Format.fprintf ppf ",@ "
 
 let rec pp_directive ppf directive = match directive with
@@ -65,19 +79,27 @@ let rec pp_directive ppf directive = match directive with
      Format.fprintf ppf "@[<4>Push(";
      pp_value ppf v;
      Format.fprintf ppf ")@]"
-  | Pop -> Format.fprintf ppf "Pop"
-  | PopEnv -> Format.fprintf ppf "PopEnv"
-  | Seq -> Format.fprintf ppf "Seq"
-  | Continue id -> Format.fprintf ppf "Continue(%d)" id
-  | Break id -> Format.fprintf ppf "Break(%d)" id
-  | BlockEnd -> Format.fprintf ppf "BlockEnd"
   | Capture (params, captures, body) ->
      Format.fprintf ppf "@[<4>Capture(%d,@ %d,@ " params captures;
      pp_directive_list ppf body;
      Format.fprintf ppf ")@]"
   | Builtin name -> Format.fprintf ppf "Builtin(%s)" name
   | Call args -> Format.fprintf ppf "Call(%d)" args
+  | PopEnv -> Format.fprintf ppf "PopEnv"
+  | Constructor (variant, params) -> Format.fprintf ppf "Constructor(%d, %d)" variant params
+  | Pop -> Format.fprintf ppf "Pop"
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
+  | Match id -> Format.fprintf ppf "Match(%d)" id
+  | Case (id, pattern, block) ->
+     Format.fprintf ppf "@[<4>Case(%d" id;
+     list_sep ppf ();
+     Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [pattern; block];
+     Format.fprintf ppf ")@]"
+  | PatternVar id -> Format.fprintf ppf "PatternVar(%d)" id
+  | PatternEnum var -> Format.fprintf ppf "PatternEnum(%d)" var
+  | SkipCase -> Format.fprintf ppf "SkipCase"
+  | SkipMatch id -> Format.fprintf ppf "SkipMatch(%d)" id
+  | EndMatch id -> Format.fprintf ppf "EndMatch(%d)" id
   | If (tblock, fblock) ->
      Format.fprintf ppf "@[<4>If(";
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [tblock; fblock];
@@ -87,6 +109,10 @@ let rec pp_directive ppf directive = match directive with
      list_sep ppf ();
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [cond; lblock; eblock];
      Format.fprintf ppf ")@]"
+  | Continue id -> Format.fprintf ppf "Continue(%d)" id
+  | Break id -> Format.fprintf ppf "Break(%d)" id
+  | Seq -> Format.fprintf ppf "Seq"
+  | BlockEnd -> Format.fprintf ppf "BlockEnd"
 and pp_directive_list ppf directives =
   Format.fprintf ppf "@[<1>(";
   Format.pp_print_list ~pp_sep:list_sep pp_directive ppf directives;
@@ -96,6 +122,11 @@ and pp_value ppf value = match value with
   | Unit -> Format.fprintf ppf "()"
   | Bool b -> Format.fprintf ppf "%B" b
   | Int i -> Format.fprintf ppf "%d" i
+  | Enum (variant, params) ->
+     Format.fprintf ppf "@[<4>Enum(%d,@ " variant;
+     pp_value_list ppf params;
+     Format.fprintf ppf ")@]"
+  | MatchTag id -> Format.fprintf ppf "MatchTag(%d)" id
   | Func (params, locals, body) ->
      Format.fprintf ppf "@[<4>Func(%d,@ " params;
      pp_value_list ppf locals;
@@ -109,7 +140,7 @@ and pp_value_list ppf values =
 
 let pp_env ppf env =
   Format.fprintf ppf "@[<1>(%d,@ " env.locals;
-  pp_value_list ppf (Array.to_list (Array.map (!) env.stack));
+  pp_value_list ppf (Array.to_list env.stack);
   Format.fprintf ppf ")@]"
 
 let pp_env_list ppf envs =
@@ -117,11 +148,13 @@ let pp_env_list ppf envs =
   Format.pp_print_list ~pp_sep:list_sep pp_env ppf envs;
   Format.fprintf ppf ")@]"
 
-let print_int env = match !(env.stack.(0)) with
+(*** Builtins ***)
+
+let print_int env = match env.stack.(0) with
   | Int x -> print_int x; print_newline(); Unit
   | _ -> failwith "type mismatch"
 
-let print_bool env = match !(env.stack.(0)) with
+let print_bool env = match env.stack.(0) with
   | Bool b -> print_string (string_of_bool b); print_newline (); Unit
   | _ -> failwith "type mismatch"
 
@@ -130,6 +163,17 @@ let input_int _ = Int (read_int ())
 let builtins = FuncMap.of_seq (List.to_seq [ "print_int", (print_int, 1)
                                            ; "print_bool", (print_bool, 1)
                                            ; "input_int", (input_int, 0)])
+
+(*** Construction ***)
+
+(* Gets unique id for each match statement *)
+let new_match_id =
+  let match_idx = ref 0 in
+  let eval_new () =
+    let new_idx = !match_idx in
+    incr match_idx;
+    new_idx in
+  eval_new
 
 let funcs = ref (Array.of_list [])
 
@@ -153,12 +197,21 @@ let rec flatten_expr acc expr = match expr with
   (* Evaluate args then capture as lambda *)
   | LambdaExpr (_, params, captures, body) ->
      let acc' = Capture (params, Array.length captures, flatten_expr [] body) :: acc in
-     List.fold_left flatten_expr acc' (List.rev (Array.to_list captures))
+     List.fold_left flatten_expr acc' (captures |> Array.to_list |> List.rev)
   (* Evaluate callee then args then call *)
   | CallExpr (_, callee, args) ->
      let acc' = Call (Array.length args) :: PopEnv :: acc in
-     flatten_expr (List.fold_left flatten_expr acc' (List.rev (Array.to_list args))) callee
-  | ConstructorExpr _ -> failwith "todo: constructor in i4"
+     flatten_expr (List.fold_left flatten_expr acc' (args |> Array.to_list |> List.rev)) callee
+  (* Evaluate args then construct *)
+  | ConstructorExpr (_, variant, params) ->
+     let acc' = Constructor (variant, Array.length params) :: acc in
+     List.fold_left flatten_expr acc' (params |> Array.to_list |> List.rev)
+
+let rec flatten_pattern acc pattern = match pattern with
+  | Variable (_, id) -> PatternVar id :: acc
+  | Enum (_, var, patterns) ->
+     let acc' = List.fold_left flatten_pattern acc (List.rev patterns) in
+     PatternEnum var :: acc'
 
 let rec flatten_stmt acc stmt = match stmt with
   (* Calculate value then continue *)
@@ -167,7 +220,10 @@ let rec flatten_stmt acc stmt = match stmt with
   | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
   (* Evaluate expression bind then conntinue *)
   | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
-  | MatchStmt _ -> failwith "todo: match in i4"
+  | MatchStmt (_, e, cases) ->
+     let id = new_match_id () in
+     let cases' = List.fold_left (flatten_case id) (EndMatch id :: acc) cases in
+     flatten_expr (Match id :: cases') e
   (* Evaluate condiition branch then continue *)
   | IfStmt (_, cond, tblock, fblock) ->
      flatten_expr (If (make_if_block tblock, make_if_block fblock) :: acc) cond
@@ -181,6 +237,22 @@ let rec flatten_stmt acc stmt = match stmt with
 and sequence acc stmt = flatten_stmt (Seq :: acc) stmt
 and make_if_block stmts = List.fold_left sequence [Push None] (List.rev stmts)
 and make_while_block id stmts = List.fold_left sequence [Continue id] (List.rev stmts)
+and flatten_case id acc (_, pattern, block) =
+  Case (id, flatten_pattern [] pattern, make_if_block block) :: acc
+
+let flatten_func func =
+  if Option.is_none func.body then
+    if FuncMap.mem func.name builtins then
+      let _, params = FuncMap.find func.name builtins in
+      Func (params, [], [Builtin func.name; Seq; Push None; BlockEnd])
+    else
+      failwith "built-in has no definition"
+  else
+    let locals = List.init func.num_locals (fun _ -> None) in
+    let block = List.fold_left sequence [Push None; BlockEnd] (List.rev (Option.get func.body)) in
+    Func (func.num_params, locals, block)
+
+(*** Evaluation ***)
 
 let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
@@ -197,31 +269,14 @@ let step directives values envs = match directives, values, envs with
   | UnaryOp op :: rest, v :: values', _ -> rest, do_unary_op op v :: values', envs
 
   (* Push a function *)
-  | PushFunc id :: rest, _, _ -> rest, Array.get !funcs id :: values, envs
+  | PushFunc id :: rest, _, _ -> rest, (!funcs).(id) :: values, envs
   (* Push a local *)
-  | PushLocal id :: rest, _, env :: _ -> rest, !(Array.get env.stack id) :: values, envs
+  | PushLocal id :: rest, _, env :: _ -> rest, env.stack.(id) :: values, envs
   (* Push an arg *)
   | PushArg id :: rest, _, env :: _ ->
-     rest, !(Array.get env.stack (id + env.locals)) :: values, envs
+     rest, env.stack.(id + env.locals) :: values, envs
   (* Push a constant *)
   | Push v :: rest, _, _ -> rest, v :: values, envs
-  (* Pop a value *)
-  | Pop :: rest, _ :: values', _ -> rest, values', envs
-  (* Pop an environment *)
-  | PopEnv :: rest, _, _ :: envs' -> rest, values, envs'
-
-  (* Evaluate next statement if no return *)
-  | Seq :: rest, None :: values', _ -> rest, values', envs
-  (* Skip until reached EndBlock *)
-  | Seq :: rest, _, _ ->
-     let rec iter stack = match stack with
-       | BlockEnd :: rest -> rest
-       | _ :: rest -> iter rest
-       | _ -> failwith "Seq without BlockEnd" in
-     iter rest, values, envs
-  (* No-op (function didn't return) *)
-  | BlockEnd :: rest, _, _ ->
-     rest, values, envs
 
   (* Build function from captures on stack *)
   | Capture (params, captures, body) :: rest, _, _ ->
@@ -236,21 +291,69 @@ let step directives values envs = match directives, values, envs with
      let args', values' = take_rev args [] values in
      (match values' with
       | Func (params, locals, body) :: values'' when params = args ->
-         let env' = { stack = Array.of_list (List.map ref (locals @ args'))
+         let env' = { stack = Array.of_list (locals @ args')
                     ; locals = List.length locals
                     } in
          body @ rest, values'', env' :: envs
-      | _ -> failwith "type mismatch"
-     )
+      | _ -> failwith "type mismatch")
+  (* Pop an environment *)
+  | PopEnv :: rest, _, _ :: envs' -> rest, values, envs'
 
+  (* Create enum from parameters *)
+  | Constructor (variant, params) :: rest, _, _ ->
+     let params', values' = take_rev params [] values in
+     rest, Enum (variant, params') :: values', envs
+
+  (* Pop a value *)
+  | Pop :: rest, _ :: values', _ -> rest, values', envs
   (* Bind value and push none *)
   | Bind id :: rest, v :: values', env :: _ ->
-     (Array.get env.stack id) := v;
+     env.stack.(id) <- v;
      rest, None :: values', envs
+
   (* If true then evaluate true block *)
   | If (tblock, _) :: rest, Bool true :: values', _ -> tblock @ rest, values', envs
   (* If false then evaluate false block *)
   | If (_, fblock) :: rest, Bool false :: values', _ -> fblock @ rest, values', envs
+
+  (* Found a case *)
+  | Match mid :: Case (cid, pat, block) :: rest, v :: _, env :: _ when mid = cid ->
+     let stack = Array.copy env.stack in
+     let env' = { stack
+                ; locals = env.locals
+                } in
+     pat @ (Case (cid, pat, block) :: rest), v :: MatchTag mid :: values, env' :: envs
+  (* No more cases so push None *)
+  | Match mid :: EndMatch eid :: rest, _ :: values', _ when mid = eid -> rest, None :: values', envs
+  (* Find case or end *)
+  | Match id :: _ :: rest, _, _ -> Match id :: rest, values, envs
+  (* Case successful so run block and skip match *)
+  | Case (_, _, block) :: rest, MatchTag tid :: _ :: values', env :: env' :: envs' ->
+     Array.iteri (Array.set env'.stack) env.stack;
+     block @ (SkipMatch tid :: rest), values', env' :: envs'
+  (* Variable pattern matches with anything. Do bind and continue *)
+  | PatternVar id :: rest, v :: values', env :: _ ->
+     env.stack.(id) <- v;
+     rest, values', envs
+  (* Enum pattern matches with correct variant. Push params to check *)
+  | PatternEnum pvar :: rest, Enum (evar, params) :: values', _ when pvar = evar ->
+     rest, params @ values', envs
+  (* Enum pattern doesn't match bad variant. Drop stack past tag and look for next step *)
+  | PatternEnum _ :: rest, Enum _ :: values', _ :: envs' ->
+     let rec drop values = match values with
+       | [] -> failwith "No MatchTag on stack"
+       | MatchTag _ :: rest -> rest
+       | _ :: rest -> drop rest in
+     let values'' = drop values' in
+     SkipCase :: rest, values'', envs'
+  (* Reached the case that failed so skip over it. *)
+  | SkipCase :: Case (id, _, _) :: rest, _, _ -> Match id :: rest, values, envs
+  (* Not reached case to skip so continue jumping. *)
+  | SkipCase :: _ :: rest, _, _ -> SkipCase :: rest, values, envs
+  (* Finished match that we completed so continue. *)
+  | SkipMatch sid :: EndMatch eid :: rest, _, _ when sid = eid -> rest, values, envs
+  (* Not reached end of match so continue jumping. *)
+  | SkipMatch id :: _ :: rest, _, _ -> SkipMatch id :: rest, values, envs
 
   (* While condition was true so start loop *)
   | While (_, _, lblock, _) :: _, Bool true :: values', _ -> lblock @ directives, values', envs
@@ -270,6 +373,19 @@ let step directives values envs = match directives, values, envs with
        | _ :: rest -> iter rest
        | _ -> failwith "Break without While" in
      iter rest, None :: values, envs
+
+  (* Evaluate next statement if no return *)
+  | Seq :: rest, None :: values', _ -> rest, values', envs
+  (* Skip until reached EndBlock *)
+  | Seq :: rest, _, _ ->
+     let rec iter stack = match stack with
+       | BlockEnd :: rest -> rest
+       | _ :: rest -> iter rest
+       | _ -> failwith "Seq without BlockEnd" in
+     iter rest, values, envs
+  (* No-op (function didn't return) *)
+  | BlockEnd :: rest, _, _ ->
+     rest, values, envs
 
   (* Reaching here is a bug *)
   | _, _, _ -> failwith "type mismatch"
@@ -294,23 +410,10 @@ let driver debug env directives =
     | _ -> iter (step directives values envs) in
   iter (directives, [], [env])
 
-
-let interpret_func func =
-  if Option.is_none func.body then
-    if FuncMap.mem func.name builtins then
-      let _, params = FuncMap.find func.name builtins in
-      Func (params, [], [Builtin func.name; Seq; Push None; BlockEnd])
-    else
-      failwith "built-in has no definition"
-  else
-    let locals = List.init func.num_locals (fun _ -> None) in
-    let block = List.fold_left sequence [Push None; BlockEnd] (List.rev (Option.get func.body)) in
-    Func (func.num_params, locals, block)
-
 let interpret debug program =
   let program' = Array.concat (Array.to_list program) in
   Array.sort (fun a b -> compare a.id b.id) program';
-  funcs := Array.map interpret_func program';
+  funcs := Array.map flatten_func program';
   let main = List.find (fun f -> f.name = "main") (Array.to_list program') in
   let env = { stack = Array.of_list []; locals = 0 } in
   match Array.get !funcs main.id with
