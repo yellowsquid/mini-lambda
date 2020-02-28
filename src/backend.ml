@@ -1,140 +1,95 @@
-(* Generate linux-unknown-x86_64 asm.
- *
- * Stack pointer saved in %rsp.
- * Heap pointer saved in %r12.
- * Functions are stored local count, return, locals.
- *)
+open Lir
+(* open Ops *)
 
-open Ir
-open Ops
+let write_register r = match r with
+  | StackPointer -> "%rsp"
+  | HeapPointer -> "%r12"
+  | Temporary -> "%rcx"
+  | Persistent -> "%rax"
+  | GivenHeap -> "%rdi"
 
-let compile_block debug out id insts =
-  Printf.fprintf out ".text\n";
-  Printf.fprintf out "_block_%d:\n" id;
-  List.iter (fun inst ->
-      (if debug
-       then
-         let formatter = Format.str_formatter in
-         Format.pp_set_margin formatter 76;
-         pp_inst formatter inst;
-         Format.flush_str_formatter ()
-         |> String.split_on_char '\n'
-         |> List.iter (Printf.fprintf out "  # %s\n"));
-      match inst with
-      | BinOp op ->
-         Printf.fprintf out "\tpopq %%rcx # Pop rhs\n";
-         (match op with
-          | Add -> Printf.fprintf out "\taddq %%rcx, (%%rsp) # Add rhs to left\n"
-          | Sub -> Printf.fprintf out "\tsubq %%rcx, (%%rsp) # Sub rhs from left\n"
-          | And -> Printf.fprintf out "\tandq %%rcx, (%%rsp) # And rhs with left\n"
-          | Or -> Printf.fprintf out "\torq %%rcx, (%%rsp) # Or rhs with left\n"
-          | Equal ->
-             Printf.fprintf out "\txorq %%rax, %%rax # Set rax to 0\n";
-             Printf.fprintf out "\tcmpq %%rcx, (%%rsp) # Compare rhs with left\n";
-             Printf.fprintf out "\tsete %%al # Set rax to 1 if equal\n";
-             Printf.fprintf out "\tmovq %%rax, (%%rsp) # Push to stack\n")
-      | UnaryOp Invert -> Printf.fprintf out "\txorq $1, (%%rsp) # Invert stack top\n"
-      | AllocHeap (stacked, Func (locals, block)) when stacked = locals ->
-         Printf.fprintf out "\tmovq %%rsp, %%rbx # Save stack pointer\n";
-         Printf.fprintf out "\tsubq $64, %%rsp # Make space on stack\n";
-         Printf.fprintf out "\tandq $-16, %%rsp # Align stack to 16-byte boundary\n";
-         Printf.fprintf out "\tmovq %%r12, %%rdi # Set first arg to heap pointer\n";
-         Printf.fprintf out "\tmovq $%d, %%rsi # Set second arg to space needed\n" (locals + 2);
-         Printf.fprintf out "\tcallq lambda_alloc # Call the allocate function\n";
-         Printf.fprintf out "\tmovq $%d, (%%rax) # Move local count to heap\n" locals;
-         Printf.fprintf out "\tleaq _block_%d(%%rip), %%rcx # Save return to tempory\n" block;
-         Printf.fprintf out "\tmovq %%rcx, 8(%%rax) # Move return address to heap\n";
-         Printf.fprintf out "\tmovq %%rbx, %%rsp # Restore stack pointer\n";
-         let rec capture n =
-           if n = locals then ()
-           else begin
-               Printf.fprintf out "\tmovq %d(%%rsp), %%rcx # Move stack item to rcx\n" (8 * n);
-               Printf.fprintf out "\tmovq %%rcx, %d(%%rax) # Move rcx to heap item\n" (8 * n + 16);
-               capture (n + 1)
-             end in
-         capture 0;
-         Printf.fprintf out "\taddq $%d, %%rsp # Readjust stack pointer\n" (8 * locals);
-         Printf.fprintf out "\tpushq %%rax # Push heap position to stack\n"
-      | AllocHeap _ -> failwith "invalid alloc heap"
-      | AllocStack locals ->
-         if locals > 0 then
-           Printf.fprintf out "\tsubq $%d, %%rsp # Allocate space on stack\n" (8 * locals)
-      | CopyLocals (locals, args) ->
-         Printf.fprintf out "\tmovq %d(%%rsp), %%rcx # Copy closure location\n" (8 * args + 8);
-         let base = (8 * locals + 8) in
-         let rec copy n =
-           if n = locals then ()
-           else begin
-               Printf.fprintf out "\tpushq %d(%%rcx) # Push from heap to stack\n" (base - 8 * n);
-               copy (n + 1)
-             end in
-         copy 0
-      | PushFunc id ->
-         Printf.fprintf out "\tleaq _function_%d(%%rip), %%rcx # Get address of function\n" id;
-         Printf.fprintf out "\tpushq %%rcx # Push it onto stack\n"
-      | PushStack id -> Printf.fprintf out "\tpushq %d(%%rsp) # Push value in stack\n" (8 * id)
-      | Push Unit -> Printf.fprintf out "\tpushq $0 # Push unit\n"
-      | Push (Bool true) -> Printf.fprintf out "\tpushq $1 # Push true\n"
-      | Push (Bool false) -> Printf.fprintf out "\tpushq $0 # Push false\n"
-      | Push (Int i) -> Printf.fprintf out "\tpushq $%d # Push int\n" i
-      | Push _ -> failwith "invalid push"
-      | Bind index ->
-         Printf.fprintf out "\tpopq %%rcx # Pop value from stack\n";
-         Printf.fprintf out "\tmovq %%rcx, %d(%%rsp) # Assign to local\n" (8 * index - 8)
-      | Pop -> Printf.fprintf out "\tpopq %%rcx # Pop value from stack\n";
-      | Builtin name ->
-         Printf.fprintf out "\tmovq %%rsp, %%rbx # Save stack pointer\n";
-         Printf.fprintf out "\tsubq $64, %%rsp # Make space on stack\n";
-         Printf.fprintf out "\tandq $-16, %%rsp # Align stack to 16-byte boundary\n";
-         Printf.fprintf out "\tmovq %%r12, %%rdi # Set first arg to heap pointer\n";
-         Printf.fprintf out "\tmovq %%rbx, %%rsi # Set second arg to stack pointer\n";
-         Printf.fprintf out "\tcallq %s # Call builtin function\n" name;
-         Printf.fprintf out "\tmovq %%rax, %%rsp # Update stack pointer\n"
-      | Call (args, return) ->
-         Printf.fprintf out "\tmovq %d(%%rsp), %%rax # Copy closure location\n" (8 * args);
-         Printf.fprintf out "\tleaq _block_%d(%%rip), %%rcx # Load return address\n" return;
-         Printf.fprintf out "\tpushq %%rcx # Push return address\n";
-         Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n"
-      | Return (locals, args) ->
-         Printf.fprintf out "\tpopq %%rcx # Pop return value\n";
-         if locals > 0 then
-           Printf.fprintf out "\taddq $%d, %%rsp # Pop locals\n" (8 * locals);
-         Printf.fprintf out "\tpopq %%rax # Pop return address\n";
-         if args > 0 then
-           Printf.fprintf out "\taddq $%d, %%rsp # Pop args\n" (8 * args);
-         Printf.fprintf out "\tmovq %%rcx, (%%rsp) # Push return value\n";
-         Printf.fprintf out "\tjmp *%%rax # Jump to return address\n"
-      | Jump block -> Printf.fprintf out "\tjmp _block_%d # Jump to block\n" block
-      | If (tblock, fblock) ->
-         Printf.fprintf out "\tpopq %%rcx # Pop off condition\n";
-         Printf.fprintf out "\tcmpq $1, %%rcx # Check if true\n";
-         Printf.fprintf out "\tje _block_%d # Jump for true\n" tblock;
-         Printf.fprintf out "\tjne _block_%d # Jump for false\n" fblock
-    ) insts
+let write_offset r offset =
+  let register = write_register r in
+  if offset = 0
+  then Printf.sprintf "(%s)" register
+  else Printf.sprintf "%d(%s)" (8 * offset) register
 
-let compile_function _debug out id (name, block) =
-  Printf.fprintf out ".data\n";
-  Printf.fprintf out ".global _lambda_%s\n" name;
-  Printf.fprintf out "_lambda_%s:\n" name;
-  Printf.fprintf out "_function_%d:\n" id;
-  Printf.fprintf out "\t.quad %d\n" 0;
-  Printf.fprintf out "\t.quad _block_%d\n" block
+let write_source source = match source with
+  | Constant i -> Printf.sprintf "$%d" i
+  | FromRegister r -> write_register r
+  | FromOffset (r, offset) -> write_offset r offset
 
-let compile debug out program =
-  Printf.fprintf out ".text\n";
-  Printf.fprintf out ".global lambda_main\n";
-  Printf.fprintf out "lambda_main:\n";
-  Printf.fprintf out "\tpushq %%r12 # Callee saves\n";
-  Printf.fprintf out "\tmovq %%rdi, %%r12 # Save heap location\n";
-  Printf.fprintf out "\tleaq _function_%d(%%rip), %%rax # Get main function location\n" program.main;
-  Printf.fprintf out "\tpushq %%rax # Push main function onto the stack\n";
-  Printf.fprintf out "\tleaq lambda_end(%%rip), %%rcx # Load return address\n";
-  Printf.fprintf out "\tpushq %%rcx # Push return address\n";
-  Printf.fprintf out "\tjmp *8(%%rax) # Jump to closure body\n";
-  Printf.fprintf out ".text\n";
-  Printf.fprintf out "lambda_end:\n";
-  Printf.fprintf out "\tpopq %%rax # Move return value into register\n";
-  Printf.fprintf out "\tpopq %%r12 # Restore parent r12\n";
-  Printf.fprintf out "\tret # Quit lambda land\n";
-  Array.iteri (compile_block debug out) program.blocks;
-  Array.iteri (compile_function debug out) program.funcs
+let write_dest dest = match dest with
+  | ToRegister r -> write_register r
+  | ToOffset (r, offset) -> write_offset r offset
+
+let write_label label = match label with
+  | Function fp -> Printf.sprintf "_function_%d" fp
+  | Block block -> Printf.sprintf "_block_%d" block
+  | Local name -> Printf.sprintf "_lambda_%s" name
+  | Global name -> name
+
+let write_address address = match address with
+  | OfLabel l -> write_label l
+  | OfRegister r -> Printf.sprintf "*%s" (write_register r)
+  | OfOffset (r, offset) -> Printf.sprintf "*%s" (write_offset r offset)
+
+let write_blob blob = match blob with
+  | Int i -> string_of_int i
+  | Label l -> write_label l
+
+let write_inst debug out inst = match inst with
+  | Binary Add ->
+     output_string out "\tpopq %rcx\n";
+     output_string out "\taddq %rcx, (%rsp)\n"
+  | Binary Sub ->
+     output_string out "\tpopq %rcx\n";
+     output_string out "\tsubq %rcx, (%rsp)\n"
+  | Binary And ->
+     output_string out "\tpopq %rcx\n";
+     output_string out "\tandq %rcx, (%rsp)\n"
+  | Binary Or ->
+     output_string out "\tpopq %rcx\n";
+     output_string out "\torq %rcx, (%rsp)\n"
+  | Binary Equal ->
+     output_string out "\tpopq %rcx\n";
+     output_string out "\txorq %rax, %rax\n";
+     output_string out "\tcmpq %rcx, (%rsp)\n";
+     output_string out "\tsete %al\n";
+     output_string out "\tmovq %rax, (%rsp)\n"
+  | Unary Invert -> output_string out "\txorq $1, (%rsp)\n"
+  | StackPush s -> Printf.fprintf out "\tpushq %s\n" (write_source s)
+  | StackPop d -> Printf.fprintf out "\tpopq %s\n" (write_dest d)
+  | Store (r, d) -> Printf.fprintf out "\tmovq %s, %s\n" (write_register r) (write_dest d)
+  | StoreConst (i, d) -> Printf.fprintf out "\tmovq $%d, %s\n" i (write_dest d)
+  | Load (s, r) -> Printf.fprintf out "\tmovq %s, %s\n" (write_source s) (write_register r)
+  | Address (l, r) -> Printf.fprintf out "\tleaq %s(%%rip), %s\n" (write_label l) (write_register r)
+  | Jump a -> Printf.fprintf out "\tjmp %s\n" (write_address a)
+  | Compare (i, s) -> Printf.fprintf out "\tcmpq $%d, %s\n" i (write_source s)
+  | JumpCond (true, a) -> Printf.fprintf out "\tje %s\n" (write_address a)
+  | JumpCond (false, a) -> Printf.fprintf out "\tjne %s\n" (write_address a)
+  | Call funct ->
+     output_string out "\tmovq %rsp, %rbx\n";
+     output_string out "\tsubq $64, %rsp\n";
+     output_string out "\tandq $-16, %rsp\n";
+     output_string out "\tmovq %r12, %rdi\n";
+     (match funct with
+      | LambdaAlloc size ->
+         Printf.fprintf out "\tmovq $%d, %%rsi\n" size;
+         output_string out "\tcallq lambda_alloc\n";
+         output_string out "\tmovq %rbx, %rsp\n"
+      | LambdaBuiltin name ->
+         output_string out "\tmovq %rbx, %rsi\n";
+         Printf.fprintf out "\tcallq %s\n" name)
+  | BinFrom (Add, s, r) -> Printf.fprintf out "\taddq %s, %s\n" (write_source s) (write_register r)
+  | BinFrom (Sub, s, r) -> Printf.fprintf out "\tsubq %s, %s\n" (write_source s) (write_register r)
+  | BinFrom _ -> failwith "fixme: implement other operations"
+  | Text -> output_string out ".text\n"
+  | Data -> output_string out ".data\n"
+  | Export l -> Printf.fprintf out ".global %s\n" (write_label l)
+  | Label l -> Printf.fprintf out "%s:\n" (write_label l)
+  | Blob b -> Printf.fprintf out "\t.quad %s\n" (write_blob b)
+  | Debug s -> if debug then Printf.fprintf out "\t # %s\n" s
+  | End -> Printf.fprintf out "\tret\n"
+
+let compile debug out insts = List.iter (write_inst debug out) insts

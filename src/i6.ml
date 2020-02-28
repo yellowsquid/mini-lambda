@@ -36,7 +36,7 @@ type directive
   (* Pushes constant value *)
   | Push of stack_value
   (* Allocates space and pushes to heap. *)
-  (* Parts are stack elements to move and heap value *)
+  (* Parts are size on heap and heap value *)
   | AllocHeap of int * heap_value
   (* Calls builtin function *)
   | Builtin of string
@@ -48,13 +48,13 @@ type directive
   | CopyLocals of env
   (* Jumps to address and cleans up env  *)
   | Return of env
-  (* Pops value *)
-  | Pop
+  (* Pops values *)
+  | Pop of int
   (* Binds local to value *)
   | Bind of int
   (* Creates environment for pattern matching *)
   | Case of int
-  (* Pattern matching enum: variant * pattern depth * next case. Pattern depth excludes stack top *)
+  (* Pattern matching enum: variant * params * fail branch. *)
   | PatternEnum of int * int * int option
   (* Indicates end of pattern matching *)
   | PatternEnd of int
@@ -120,12 +120,12 @@ let rec pp_directive ppf directive = match directive with
   | AllocStack locals -> Format.fprintf ppf "AllocStack(%d)" locals
   | CopyLocals env -> Format.fprintf ppf "CopyLocals(%d, %d)" env.locals env.args
   | Return env -> Format.fprintf ppf "Return(%d, %d)" env.locals env.args
-  | Pop -> Format.fprintf ppf "Pop"
+  | Pop count -> Format.fprintf ppf "Pop(%d)" count
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
   | Case depth -> Format.fprintf ppf "Case(%d)" depth
-  | PatternEnum (var, depth, None) -> Format.fprintf ppf "PatternEnum(%d, %d)" var depth
-  | PatternEnum (var, depth, Some block) ->
-     Format.fprintf ppf "PatternEnum(%d, %d, %d)" var depth block
+  | PatternEnum (var, params, None) -> Format.fprintf ppf "PatternEnum(%d, %d)" var params
+  | PatternEnum (var, params, Some block) ->
+     Format.fprintf ppf "PatternEnum(%d, %d, %d)" var params block
   | PatternEnd depth -> Format.fprintf ppf "PatternEnd(%d)" depth
   | If (tblock, fblock) ->
      Format.fprintf ppf "If(%d, %d)" tblock fblock
@@ -212,7 +212,7 @@ let rec flatten_expr env acc depth expr = match expr with
      let capturec = Array.length captures in
      let env' = { locals = capturec; args = params } in
      let body' = add_block (CopyLocals env' :: flatten_expr env' [Return env'] capturec body) in
-     let acc' = AllocHeap (capturec, Func (capturec, body')) :: acc in
+     let acc' = AllocHeap (1 + capturec, Func (capturec, body')) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
      captures |> Array.to_list |> List.rev |> List.fold_left (flatten_exprs env) depth_acc |> snd
   | CallExpr (_, callee, args) ->
@@ -229,7 +229,7 @@ let rec flatten_expr env acc depth expr = match expr with
      flatten_expr env acc' depth callee
   | ConstructorExpr (_, variant, params) ->
      let paramc = Array.length params in
-     let acc' = AllocHeap (paramc, Enum(variant, paramc)) :: acc in
+     let acc' = AllocHeap (1 + paramc, Enum(variant, paramc)) :: acc in
      let depth_acc = (depth + paramc - 1, acc') in
      params |> Array.to_list |> List.rev |> List.fold_left (flatten_exprs env) depth_acc |> snd
 and flatten_exprs env (depth, acc) expr = depth - 1, flatten_expr env acc depth expr
@@ -239,15 +239,16 @@ let rec flatten_pattern next depth acc pattern = match pattern with
   | Variable (_, id) -> Bind (depth - id) :: acc
   | Enum (_, var, patterns) ->
      let depth_acc = (depth, acc) in
+     let fail_block = Option.map (fun block -> add_block [Pop depth; Jump block]) next in
      let acc' = patterns |> List.rev |> List.fold_left (flatten_patterns next) depth_acc |> snd in
-     PatternEnum (var, depth, next) :: acc'
+     PatternEnum (var, List.length patterns, fail_block) :: acc'
 and flatten_patterns next (depth, acc) pattern = depth + 1, flatten_pattern next depth acc pattern
 
 let rec flatten_stmt env acc stmt =
   let depth = env.locals in
   match stmt with
   | ReturnStmt (_, e) -> flatten_expr env (Return env :: acc) depth e
-  | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
+  | ExprStmt (_, e) -> flatten_expr env (Pop 1 :: acc) depth e
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
   | MatchStmt (_, e, cases) ->
      let continue = add_block acc in
@@ -304,20 +305,25 @@ let unwrap base count heap =
 
 let wrap data = List.map (fun v -> ref (Sized !v)) data
 
-let split n stack =
-  let rec iter n stack cnt = match n, stack with
-    | 0, _ -> cnt [] stack
-    | _, v :: rest -> iter (n - 1) rest (fun acc rest' -> cnt (ref !v :: acc) rest')
-    | _, _ -> failwith "runtime error: not enough stack to split"
-  in iter n stack (fun acc rest -> acc, rest)
+let rec drop n stack =
+  if n = 0
+  then stack
+  else
+    match stack with
+    | [] -> failwith "not enough values to drop in stack"
+    | _ :: rest -> drop (n - 1) rest
 
-let drop n stack = snd (split n stack)
+let split n stack = sublist 0 n stack, drop n stack
 
-let rec assign base values stack = match values with
-  | [] -> ()
-  | v :: rest ->
-     (List.nth stack base) := !v;
-     assign (base + 1) rest stack
+let rec assign base count stack =
+  if count = 0
+  then stack
+  else
+    match stack with
+    | [] -> failwith "not enough values to assign in stack"
+    | v :: rest ->
+       (List.nth stack base) := !v;
+       assign base (count - 1) rest
 
 let step directives values heap = match directives, values with
   | [], values -> [], values, heap
@@ -348,39 +354,37 @@ let step directives values heap = match directives, values with
   | PushStack pos :: rest, _ -> rest, ref !(List.nth values pos) :: values, heap
   | Push v :: rest, _ -> rest, ref v :: values, heap
 
-  | AllocHeap (ncopy, value) :: rest, _ ->
+  | AllocHeap (_, Func (locals, block)) :: rest, _ ->
      let out = List.length heap in
-     let data, values' = split ncopy values in
-     rest, ref (HeapIndex out) :: values', heap @ (ref value :: wrap data)
+     let heap' = heap @ (ref (Func (locals, block)) :: wrap (sublist 0 locals values)) in
+     rest, ref (HeapIndex out) :: (drop locals values), heap'
+  | AllocHeap (_, Enum (variant, params)) :: rest, _ ->
+     let out = List.length heap in
+     let heap' = heap @ (ref (Enum (variant, params)) :: wrap (sublist 0 params values)) in
+     rest, ref (HeapIndex out) :: (drop params values), heap'
 
   | Builtin name :: rest, _ -> rest, (fst (FuncMap.find name builtins)) values, heap
   | AllocStack locals :: rest, _ -> rest, List.init locals (fun _ -> ref Unit) @ values, heap
   | CopyLocals env :: rest, _ ->
      (match !(List.nth values (env.args + 1)) with
-      | HeapIndex i ->
-         let locals' = unwrap (i + 1) env.locals heap in
-         rest, locals' @ values, heap
+      | HeapIndex i -> rest, unwrap (i + 1) env.locals heap @ values, heap
       | _ -> failwith "runtime error: callee not on heap")
 
-  | Pop :: rest, _ :: values' -> rest, values', heap
-  | Bind n :: rest, v :: values' -> assign (n - 1) [v] values'; rest, values', heap
+  | Pop n :: rest, _ -> rest, drop n values, heap
+  | Bind n :: rest, _ -> rest, assign n 1 values, heap
 
-  | Case depth :: rest, v :: _ -> rest, ref !v :: sublist 1 depth values @ values, heap
-  | PatternEnum (pvar, depth, next) :: rest, { contents = HeapIndex i } :: values' ->
+  | Case depth :: rest, _ -> rest, sublist 0 (depth + 1) values @ values, heap
+  | PatternEnum (pvar, paramc, fail) :: rest, { contents = HeapIndex i } :: values' ->
      (match !(List.nth heap i) with
-      | Enum (evar, paramc) when pvar = evar ->
+      | Enum (evar, _) when pvar = evar ->
          rest, (unwrap (i + 1) paramc heap |> List.rev) @ values', heap
       | Enum _ ->
-         let values'' = drop depth values' in
-         (match next with
-          | Some block -> get_block block, values'', heap
+         (match fail with
+          | Some block -> get_block block, values', heap
           | None -> failwith "runtime error: cases not exhaustive")
       | _ -> failwith "runtime error: enum match with not an enum")
   | PatternEnd depth :: rest, _ ->
-     let binds, values' = split depth values in
-     let values'' = drop 1 values' in
-     assign 0 binds values'';
-     rest, values'', heap
+     rest, values |> assign (depth + 1) depth |> drop 1, heap
 
   | _, _ -> failwith "runtime error: invalid operation"
 
@@ -399,7 +403,10 @@ let driver debug stack directives heap =
        list_sep ppf ();
        pp_heap_value_list ppf heap;
        Format.fprintf ppf "@]";
-       Format.pp_print_newline ppf ());
+       Format.pp_print_newline ppf ();
+       if List.length directives = 1 then
+         (Format.pp_print_string ppf "*****";
+          Format.pp_print_newline ppf ()));
     match directives with
     | [] -> values
     | _ -> iter (step directives values heap) in

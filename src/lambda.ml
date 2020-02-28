@@ -47,7 +47,8 @@ let () =
     Analysis.analyse typed_ast;
     if !compile then
       let ir = Ir_lowering.lower !debug typed_ast in
-      Backend.compile !debug !out_chan ir
+      let lir = Lir_lowering.lower !debug ir in
+      Backend.compile !debug !out_chan lir
     else
       !interpreter !debug typed_ast
   with

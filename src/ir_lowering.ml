@@ -62,7 +62,7 @@ let rec flatten_expr env acc depth expr = match expr with
                   then CopyLocals (capturec, params) :: body'
                   else body' in
      let block = add_block body'' in
-     let acc' = AllocHeap (capturec, Func (Array.length captures, block)) :: acc in
+     let acc' = AllocHeap (capturec + 2, Func (Array.length captures, block)) :: acc in
      let depth_acc = (depth + capturec - 1, acc') in
      snd (List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list captures)))
   | CallExpr (_, callee, args) ->
@@ -72,16 +72,32 @@ let rec flatten_expr env acc depth expr = match expr with
      let depth_acc = (depth + argc, [call']) in
      let acc' = List.fold_left (flatten_exprs env) depth_acc (List.rev (Array.to_list args)) in
      flatten_expr env (snd acc') depth callee
-  | ConstructorExpr _ -> failwith "todo: constructor in ir_lowering"
+  | ConstructorExpr (_, variant, params) ->
+     let paramc = Array.length params in
+     let acc' = AllocHeap (paramc + 2, Enum (variant, paramc)) :: acc in
+     let depth_acc = (depth + paramc - 1, acc') in
+     params |> Array.to_list |> List.rev |> List.fold_left (flatten_exprs env) depth_acc |> snd
 and flatten_exprs env (depth, acc) expr = depth - 1, flatten_expr env acc depth expr
+
+let rec flatten_pattern next depth acc pattern = match pattern with
+  | Variable (_, id) -> Bind (depth - id) :: acc
+  | Enum (_, var, patterns) ->
+     let depth_acc = (depth, acc) in
+     let fail_block = Option.map (fun block -> add_block [Pop depth; Jump block]) next in
+     let acc' = patterns |> List.rev |> List.fold_left (flatten_patterns next) depth_acc |> snd in
+     PatternEnum (var, List.length patterns, fail_block) :: acc'
+and flatten_patterns next (depth, acc) pattern = depth + 1, flatten_pattern next depth acc pattern
 
 let rec flatten_stmt env acc stmt =
   let depth = env.locals in
   match stmt with
   | ReturnStmt (_, e) -> flatten_expr env (Return (env.locals, env.args) :: acc) depth e
-  | ExprStmt (_, e) -> flatten_expr env (Pop :: acc) depth e
+  | ExprStmt (_, e) -> flatten_expr env (Pop 1 :: acc) depth e
   | BindStmt (_, id, e) -> flatten_expr env (Bind (depth - id) :: acc) depth e
-  | MatchStmt _ -> failwith "todo: match in ir_lowering"
+  | MatchStmt (_, e, cases) ->
+     let continue = add_block acc in
+     let first_case, _ = List.fold_left (flatten_case env) (None, continue) (List.rev cases) in
+     flatten_expr env [Jump (Option.get first_case)] depth e
   | IfStmt (_, cond, tblock, fblock) ->
      let continue = [Jump (add_block acc)] in
      let tblock' = add_block (make_block env tblock continue) in
@@ -99,6 +115,10 @@ let rec flatten_stmt env acc stmt =
   | BreakStmt (_, id) -> Jump (get_continue id) :: acc
 and make_block env stmts acc =
   List.fold_left (flatten_stmt env) acc (List.rev stmts)
+and flatten_case env (next, continue) (_, pattern, block) =
+  let block' = PatternEnd env.locals :: make_block env block [Jump continue] in
+  let id = add_block (Case env.locals :: flatten_pattern next env.locals block' pattern) in
+  Some id, continue
 
 let lower_func _debug func =
   if Option.is_none func.body then

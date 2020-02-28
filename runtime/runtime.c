@@ -17,7 +17,6 @@ long capacity = 0;
 // - return address above stack
 // - args above return address
 
-
 pointer_t print_int(pointer_t heap, pointer_t stack) {
   printf("%ld\n", *(stack + 1));
   *(--stack) = 0;
@@ -30,6 +29,7 @@ pointer_t print_bool(pointer_t heap, pointer_t stack) {
   } else {
     puts("false");
   }
+
   *(--stack) = 0;
   return stack;
 }

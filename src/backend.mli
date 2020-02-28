@@ -1,1 +1,1 @@
-val compile : bool -> out_channel -> Ir.program -> unit
+val compile : bool -> out_channel -> Lir.instruction list -> unit
