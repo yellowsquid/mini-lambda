@@ -342,10 +342,16 @@ let find_in_scope scope name nb = match scope with
 
 let rec check_pattern_names_unique acc pattern = match pattern with
   | Variable (loc, name) ->
-     if String.get name 0 != '_' && List.mem name acc
+     if List.mem name acc
      then raise (Error (loc, Printf.sprintf "duplicate pattern name '%s'" name))
      else name :: acc
   | Enum (_, _, params) -> List.fold_left check_pattern_names_unique acc params
+  | Ignore (loc, name) ->
+     if name != "_" && List.mem name acc
+     then raise (Error (loc, Printf.sprintf "duplicate pattern name '%s'" name))
+     else name :: acc
+  | Int _ -> acc
+  | Bool _ -> acc
 
 let rec check_pattern consts nb scope pattern = match pattern with
   | Variable (loc, name) ->
@@ -362,11 +368,17 @@ let rec check_pattern consts nb scope pattern = match pattern with
            let ty, param', nb', scope' = check_pattern consts nb scope param in
            let loc = match param with
              | Variable (loc, _) -> loc
-             | Enum (loc, _, _) -> loc in
+             | Enum (loc, _, _) -> loc
+             | Ignore (loc, _) -> loc
+             | Int (loc, _) -> loc
+             | Bool (loc, _) -> loc in
            unify loc ty param_ty;
            param' :: params, nb', scope')
          ([], nb, scope) (List.rev params) (List.rev param_tys) in
      ty, Typed_ast.Enum (loc, variant, params'), nb', scope'
+  | Ignore (loc, _) -> new_unbound_var (), Typed_ast.Ignore loc, nb, scope
+  | Int (loc, i) -> TyInt, Typed_ast.Int (loc, i), nb, scope
+  | Bool (loc, i) -> TyBool, Typed_ast.Bool (loc, i), nb, scope
 
 (* Checks the type of a statement. *)
 let rec check_statements consts ret_ty acc scope stats
@@ -566,6 +578,9 @@ let rec find_refs_expr bound acc expr = match expr with
 let rec bind_pattern acc pattern = match pattern with
   | Variable (_, name) -> name :: acc
   | Enum (_, _, patterns) -> List.fold_left bind_pattern acc patterns
+  | Ignore _ -> acc
+  | Int _ -> acc
+  | Bool _ -> acc
 
 (* Finds the free variables in a function body. *)
 let rec find_refs_stat bound stats

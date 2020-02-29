@@ -86,6 +86,9 @@ let rec flatten_pattern next depth acc pattern = match pattern with
      let fail_block = Option.map (fun block -> add_block [Pop depth; Jump block]) next in
      let acc' = patterns |> List.rev |> List.fold_left (flatten_patterns next) depth_acc |> snd in
      PatternEnum (var, List.length patterns, fail_block) :: acc'
+  | Ignore _ -> Pop 1 :: acc
+  | Int (_, i) -> PatternInt (i, next) :: acc
+  | Bool (_, b) -> PatternBool (b, next) :: acc
 and flatten_patterns next (depth, acc) pattern = depth + 1, flatten_pattern next depth acc pattern
 
 let rec flatten_stmt env acc stmt =

@@ -209,11 +209,24 @@ let step config = match config with
      env.binds.(id) <- v;
      Apply (PatternsCnt (vs, pats) :: rest, Match (Some env))
   (* Match enum matches variant and recursively matches params *)
-  | Apply (PatternsCnt (Enum (var, params) :: vs, Typed_ast.Enum (_, evar, epats) :: pats) :: rest,
+  | Apply (PatternsCnt (Enum (var, params) :: vs, Enum (_, evar, epats) :: pats) :: rest,
            Match (Some env)) when var = evar ->
      Apply (PatternsCnt (params @ vs, epats @ pats) :: rest, Match (Some env))
   (* Match enum wrong variant fails immediately *)
-  | Apply (PatternsCnt (Enum _ :: _, _) :: rest, _) -> Apply (rest, Match None)
+  | Apply (PatternsCnt (_, Enum _ :: _) :: rest, _) -> Apply (rest, Match None)
+  (* Ignore skips value *)
+  | Apply (PatternsCnt (_ :: vs, Ignore _ :: pats) :: rest, Match (Some env)) ->
+     Apply (PatternsCnt (vs, pats) :: rest, Match (Some env))
+  (* Int carries on if right value *)
+  | Apply (PatternsCnt (Int i :: vs, Int (_, j) :: pats) :: rest, Match (Some env)) when i = j ->
+     Apply (PatternsCnt (vs, pats) :: rest, Match (Some env))
+  (* Int stops immediately if wrong value *)
+  | Apply (PatternsCnt (_, Int _ :: _) :: rest, _) -> Apply (rest, Match None)
+  (* Bool carries on if right value *)
+  | Apply (PatternsCnt (Bool b :: vs, Bool (_, b') :: pats) :: rest, Match (Some env)) when b = b' ->
+     Apply (PatternsCnt (vs, pats) :: rest, Match (Some env))
+  (* Bool stops immediately if wrong value *)
+  | Apply (PatternsCnt (_, Bool _ :: _) :: rest, _) -> Apply (rest, Match None)
 
   (* If condition was true then evaluate tblock *)
   | Apply (IfCnt (env, tblock, _) :: rest, Bool true) -> Apply (SeqCnt (env, tblock) :: rest, None)

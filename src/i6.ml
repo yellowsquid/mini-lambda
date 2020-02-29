@@ -56,6 +56,10 @@ type directive
   | Case of int
   (* Pattern matching enum: variant * params * fail branch. *)
   | PatternEnum of int * int * int option
+  (* Pattern matching int: value * next case *)
+  | PatternInt of int * int option
+  (* Pattern matching bool: value * next case *)
+  | PatternBool of bool * int option
   (* Indicates end of pattern matching *)
   | PatternEnd of int
   (* Conditional jump: true block * false block *)
@@ -126,6 +130,10 @@ let rec pp_directive ppf directive = match directive with
   | PatternEnum (var, params, None) -> Format.fprintf ppf "PatternEnum(%d, %d)" var params
   | PatternEnum (var, params, Some block) ->
      Format.fprintf ppf "PatternEnum(%d, %d, %d)" var params block
+  | PatternInt (i, None) -> Format.fprintf ppf "PatternInt(%d)" i
+  | PatternInt (i, Some block) -> Format.fprintf ppf "PatternInt(%d, %d)" i block
+  | PatternBool (b, None) -> Format.fprintf ppf "PatternBool(%B)" b
+  | PatternBool (b, Some block) -> Format.fprintf ppf "PatternBool(%B, %d)" b block
   | PatternEnd depth -> Format.fprintf ppf "PatternEnd(%d)" depth
   | If (tblock, fblock) ->
      Format.fprintf ppf "If(%d, %d)" tblock fblock
@@ -242,6 +250,9 @@ let rec flatten_pattern next depth acc pattern = match pattern with
      let fail_block = Option.map (fun block -> add_block [Pop depth; Jump block]) next in
      let acc' = patterns |> List.rev |> List.fold_left (flatten_patterns next) depth_acc |> snd in
      PatternEnum (var, List.length patterns, fail_block) :: acc'
+  | Ignore _ -> Pop 1 :: acc
+  | Int (_, i) -> PatternInt (i, next) :: acc
+  | Bool (_, b) -> PatternBool (b, next) :: acc
 and flatten_patterns next (depth, acc) pattern = depth + 1, flatten_pattern next depth acc pattern
 
 let rec flatten_stmt env acc stmt =
@@ -325,6 +336,10 @@ let rec assign base count stack =
        (List.nth stack base) := !v;
        assign base (count - 1) rest
 
+let pattern_fail fail values heap = match fail with
+  | Some block -> get_block block, values, heap
+  | None -> failwith "runtime error: cases not exhaustive"
+
 let step directives values heap = match directives, values with
   | [], values -> [], values, heap
 
@@ -378,11 +393,16 @@ let step directives values heap = match directives, values with
      (match !(List.nth heap i) with
       | Enum (evar, _) when pvar = evar ->
          rest, (unwrap (i + 1) paramc heap |> List.rev) @ values', heap
-      | Enum _ ->
-         (match fail with
-          | Some block -> get_block block, values', heap
-          | None -> failwith "runtime error: cases not exhaustive")
+      | Enum _ -> pattern_fail fail values' heap
       | _ -> failwith "runtime error: enum match with not an enum")
+  | PatternInt (i, _) :: rest, { contents = Int j } :: values' when i = j ->
+     rest, values', heap
+  | PatternInt (_, fail) :: _, { contents = Int _ } :: values' ->
+     pattern_fail fail values' heap
+  | PatternBool (b, _) :: rest, { contents = Bool b' } :: values' when b = b' ->
+     rest, values', heap
+  | PatternBool (_, fail) :: _, { contents = Bool _ } :: values' ->
+     pattern_fail fail values' heap
   | PatternEnd depth :: rest, _ ->
      rest, values |> assign (depth + 1) depth |> drop 1, heap
 

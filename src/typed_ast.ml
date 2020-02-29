@@ -24,8 +24,11 @@ type expr
   | ConstructorExpr of loc * id * expr array
 
 type pattern
-  = Enum of loc * int * pattern list
-  | Variable of loc * id
+  = Variable of loc * id
+  | Enum of loc * int * pattern list
+  | Ignore of loc
+  | Int of loc * int
+  | Bool of loc * bool
 
 type statement
   = ReturnStmt of loc * expr
@@ -92,12 +95,15 @@ let rec pp_expr ppf expr = match expr with
      Format.fprintf ppf ")@]"
 
 let rec pp_pattern ppf pattern = match pattern with
+  | Variable (_, id) -> Format.fprintf ppf "*%d" id
   | Enum (_, variant, patterns) ->
      Format.fprintf ppf "@[<4>Enum(%d" variant;
      list_sep ppf ();
      pp_list pp_pattern ppf patterns;
      Format.fprintf ppf ")@]"
-  | Variable (_, id) -> Format.fprintf ppf "*%d" id
+  | Ignore _ -> Format.pp_print_string ppf "_"
+  | Int (_, i) -> Format.pp_print_int ppf i
+  | Bool (_, b) -> Format.pp_print_bool ppf b
 
 let rec pp_stmt ppf stmt = match stmt with
   | ReturnStmt (_, expr) ->

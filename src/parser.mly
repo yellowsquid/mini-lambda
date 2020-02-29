@@ -13,7 +13,7 @@
 %token <string> IDENT
 %token <string> IGNORE
 %token <string> TYPE
-%token TRUE FALSE
+%token <bool> BOOL
 %token INVERT
 %token PLUS MINUS
 %token EQUAL NEQUAL
@@ -86,7 +86,10 @@ case_stmt:
 pattern:
   | TYPE { Enum ($startpos, $1, []) }
   | TYPE LPAREN separated_nonempty_list(COMMA, pattern) RPAREN { Enum ($startpos, $1, $3) }
-  | named { Variable ($startpos, $1) }
+  | IDENT { Variable ($startpos, $1) }
+  | IGNORE { Ignore ($startpos, $1) }
+  | INT { Int ($startpos, $1) }
+  | BOOL { Bool ($startpos, $1) }
 
 if_statement:
   | IF expr LBRACE statements RBRACE
@@ -134,8 +137,7 @@ primary_expr:
   | LPAREN expr RPAREN { $2 }
   | named { IdentExpr ($startpos, $1) }
   | INT { IntExpr ($startpos, $1) }
-  | TRUE { BoolExpr ($startpos, true) }
-  | FALSE { BoolExpr ($startpos, false) }
+  | BOOL { BoolExpr ($startpos, $1) }
 
 ty:
   | TYPE { { loc = $startpos; base = $1; params = [] } }

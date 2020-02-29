@@ -107,6 +107,18 @@ let lower_inst debug acc inst =
        :: Compare (variant, FromOffset (Persistent, 0))
        :: JumpCond (false, OfLabel (Block block))
        :: repeat Temporary (load heap) push_stack paramc acc
+    | PatternInt (_, None) -> shift stack (-1) acc
+    | PatternInt (i, Some block) ->
+       StackPop (ToRegister Temporary)
+       :: Compare (i, FromRegister Temporary)
+       :: JumpCond (false, OfLabel (Block block))
+       :: acc
+    | PatternBool (_, None) -> shift stack (-1) acc
+    | PatternBool (b, Some block) ->
+       StackPop (ToRegister Temporary)
+       :: Compare ((if b then 1 else 0), FromRegister Temporary)
+       :: JumpCond (false, OfLabel (Block block))
+       :: acc
     | PatternEnd depth ->
        repeat Temporary pop_stack (store_stack depth) depth (shift stack (-1) acc)
     | If (tblock, fblock) ->

@@ -34,10 +34,12 @@ type directive
   | Bind of int
   (* Creates environment for pattern matching *)
   | Case
-  (* Pattern matching bind of variable *)
-  | PatternVar of int
   (* Pattern matching enum: variant * next case *)
   | PatternEnum of int * int option
+  (* Pattern matching int: value * next case *)
+  | PatternInt of int * int option
+  (* Pattern matching bool: value * next case *)
+  | PatternBool of bool * int option
   (* Indicates end of pattern matching *)
   | PatternEnd
   (* Conditional jump: true block * false block *)
@@ -98,9 +100,12 @@ let rec pp_directive ppf directive = match directive with
   | Pop -> Format.fprintf ppf "Pop"
   | Bind id -> Format.fprintf ppf "Bind(%d)" id
   | Case -> Format.fprintf ppf "Case"
-  | PatternVar id -> Format.fprintf ppf "PatternVar(%d)" id
   | PatternEnum (var, None) -> Format.fprintf ppf "PatternEnum(%d)" var
   | PatternEnum (var, Some block) -> Format.fprintf ppf "PatternEnum(%d, %d)" var block
+  | PatternInt (i, None) -> Format.fprintf ppf "PatternInt(%d)" i
+  | PatternInt (i, Some block) -> Format.fprintf ppf "PatternInt(%d, %d)" i block
+  | PatternBool (b, None) -> Format.fprintf ppf "PatternBool(%B)" b
+  | PatternBool (b, Some block) -> Format.fprintf ppf "PatternBool(%B, %d)" b block
   | PatternEnd -> Format.fprintf ppf "PatternEnd"
   | If (tblock, fblock) ->
      Format.fprintf ppf "If(%d, %d)" tblock fblock
@@ -203,10 +208,13 @@ let rec flatten_expr acc expr = match expr with
      params |> Array.to_list |> List.rev |> List.fold_left flatten_expr acc'
 
 let rec flatten_pattern next acc pattern = match pattern with
-  | Variable (_, id) -> PatternVar id :: acc
+  | Variable (_, id) -> Bind id :: acc
   | Enum (_, var, patterns) ->
      let acc' = patterns |> List.rev |> List.fold_left (flatten_pattern next) acc in
      PatternEnum (var, next) :: acc'
+  | Ignore _ -> Pop :: acc
+  | Int (_, i) -> PatternInt (i, next) :: acc
+  | Bool (_, b) -> PatternBool (b, next) :: acc
 
 let rec flatten_stmt acc stmt = match stmt with
   | ReturnStmt (_, e) -> flatten_expr (Return :: acc) e (* Safe as return clears stack *)
@@ -256,6 +264,13 @@ let rec take_rev n acc stack = match n, stack with
   | _, v :: rest -> take_rev (n - 1) (v :: acc) rest
   | _, _ -> failwith "stack too short"
 
+let pattern_fail next values envs =
+  let rec drop values = match values with
+    | [] -> failwith "No MatchTag on stack"
+    | MatchTag :: rest -> rest
+    | _ :: rest -> drop rest in
+  get_block next, drop values, envs
+
 let step directives values envs = match directives, values, envs with
   | [], values, envs -> [], values, envs
 
@@ -304,18 +319,18 @@ let step directives values envs = match directives, values, envs with
                 ; return = env.return
                 } in
      rest, v :: MatchTag :: values, env' :: envs
-  | PatternVar id :: rest, v :: values', env :: _ ->
-     env.stack.(id) <- v;
-     rest, values', envs
   | PatternEnum (pvar, _) :: rest, Enum (evar, params) :: values', _ when pvar = evar ->
      rest, params @ values', envs
   | PatternEnum (_, Some next) :: _, Enum _ :: values', _ :: envs' ->
-     let rec drop values = match values with
-       | [] -> failwith "No MatchTag on stack"
-       | MatchTag :: rest -> rest
-       | _ :: rest -> drop rest in
-     let values'' = drop values' in
-     get_block next, values'', envs'
+     pattern_fail next values' envs'
+  | PatternInt (i, _) :: rest, Int j :: values', _ when i = j ->
+     rest, values', envs
+  | PatternInt (_, Some next) :: _, Int _ :: values', _ :: envs' ->
+     pattern_fail next values' envs'
+  | PatternBool (b, _) :: rest, Bool b' :: values', _ when b = b' ->
+     rest, values', envs
+  | PatternBool (_, Some next) :: _, Bool _ :: values', _ :: envs' ->
+     pattern_fail next values' envs'
   | PatternEnd :: rest, MatchTag :: _ :: values', env :: env' :: envs' ->
      Array.iteri (Array.set env'.stack) env.stack;
      rest, values', env' :: envs'

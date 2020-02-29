@@ -21,6 +21,9 @@ type expr
 type pattern
   = Variable of loc * string
   | Enum of loc * string * pattern list
+  | Ignore of loc * string
+  | Int of loc * int
+  | Bool of loc * bool
 
 type statement
   = ReturnStmt of loc * expr

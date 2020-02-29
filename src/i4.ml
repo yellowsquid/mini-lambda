@@ -24,8 +24,9 @@ type directive
   | Bind of int
   | Match of id
   | Case of id * directive list * directive list
-  | PatternVar of int
   | PatternEnum of id
+  | PatternInt of int
+  | PatternBool of bool
   | SkipCase
   | SkipMatch of id
   | EndMatch of id
@@ -95,8 +96,9 @@ let rec pp_directive ppf directive = match directive with
      list_sep ppf ();
      Format.pp_print_list ~pp_sep:list_sep pp_directive_list ppf [pattern; block];
      Format.fprintf ppf ")@]"
-  | PatternVar id -> Format.fprintf ppf "PatternVar(%d)" id
   | PatternEnum var -> Format.fprintf ppf "PatternEnum(%d)" var
+  | PatternInt i -> Format.fprintf ppf "PatternInt(%d)" i
+  | PatternBool b -> Format.fprintf ppf "PatternBool(%B)" b
   | SkipCase -> Format.fprintf ppf "SkipCase"
   | SkipMatch id -> Format.fprintf ppf "SkipMatch(%d)" id
   | EndMatch id -> Format.fprintf ppf "EndMatch(%d)" id
@@ -208,10 +210,13 @@ let rec flatten_expr acc expr = match expr with
      List.fold_left flatten_expr acc' (params |> Array.to_list |> List.rev)
 
 let rec flatten_pattern acc pattern = match pattern with
-  | Variable (_, id) -> PatternVar id :: acc
+  | Variable (_, id) -> Bind id :: acc
   | Enum (_, var, patterns) ->
      let acc' = List.fold_left flatten_pattern acc (List.rev patterns) in
      PatternEnum var :: acc'
+  | Ignore _ -> Pop :: acc
+  | Int (_, i) -> PatternInt i :: acc
+  | Bool (_, b) -> PatternBool b :: acc
 
 let rec flatten_stmt acc stmt = match stmt with
   (* Calculate value then continue *)
@@ -219,7 +224,7 @@ let rec flatten_stmt acc stmt = match stmt with
   (* Evaluate expression pop then continue *)
   | ExprStmt (_, e) -> flatten_expr (Pop :: Push None :: acc) e
   (* Evaluate expression bind then conntinue *)
-  | BindStmt (_, id, e) -> flatten_expr (Bind id :: acc) e
+  | BindStmt (_, id, e) -> flatten_expr (Bind id :: Push None :: acc) e
   | MatchStmt (_, e, cases) ->
      let id = new_match_id () in
      let cases' = List.fold_left (flatten_case id) (EndMatch id :: acc) cases in
@@ -258,6 +263,14 @@ let rec take_rev n acc stack = match n, stack with
   | 0, _ -> acc, stack
   | _, v :: rest -> take_rev (n - 1) (v :: acc) rest
   | _, _ -> failwith "stack too short"
+
+let pattern_fail directives values envs =
+  let rec drop values = match values with
+    | [] -> failwith "No MatchTag on stack"
+    | MatchTag _ :: rest -> rest
+    | _ :: rest -> drop rest in
+  let values' = drop values in
+  SkipCase :: directives, values', envs
 
 let step directives values envs = match directives, values, envs with
   (* Nothing to do so we're done *)
@@ -309,7 +322,7 @@ let step directives values envs = match directives, values, envs with
   (* Bind value and push none *)
   | Bind id :: rest, v :: values', env :: _ ->
      env.stack.(id) <- v;
-     rest, None :: values', envs
+     rest, values', envs
 
   (* If true then evaluate true block *)
   | If (tblock, _) :: rest, Bool true :: values', _ -> tblock @ rest, values', envs
@@ -331,21 +344,24 @@ let step directives values envs = match directives, values, envs with
   | Case (_, _, block) :: rest, MatchTag tid :: _ :: values', env :: env' :: envs' ->
      Array.iteri (Array.set env'.stack) env.stack;
      block @ (SkipMatch tid :: rest), values', env' :: envs'
-  (* Variable pattern matches with anything. Do bind and continue *)
-  | PatternVar id :: rest, v :: values', env :: _ ->
-     env.stack.(id) <- v;
-     rest, values', envs
   (* Enum pattern matches with correct variant. Push params to check *)
   | PatternEnum pvar :: rest, Enum (evar, params) :: values', _ when pvar = evar ->
      rest, params @ values', envs
   (* Enum pattern doesn't match bad variant. Drop stack past tag and look for next step *)
   | PatternEnum _ :: rest, Enum _ :: values', _ :: envs' ->
-     let rec drop values = match values with
-       | [] -> failwith "No MatchTag on stack"
-       | MatchTag _ :: rest -> rest
-       | _ :: rest -> drop rest in
-     let values'' = drop values' in
-     SkipCase :: rest, values'', envs'
+     pattern_fail rest values' envs'
+  (* Int pattern matches value. *)
+  | PatternInt i :: rest, Int j :: values', _ when i = j ->
+     rest, values', envs
+  (* Int pattern fail. Drop stack past tag and look for next step *)
+  | PatternInt _ :: rest, Int _ :: values', _ :: envs' ->
+     pattern_fail rest values' envs'
+  (* Bool pattern matches value. *)
+  | PatternBool b :: rest, Bool b' :: values', _ when b = b' ->
+     rest, values', envs
+  (* Bool pattern fail. Drop stack past tag and look for next step *)
+  | PatternBool _ :: rest, Bool _ :: values', _ :: envs' ->
+     pattern_fail rest values' envs'
   (* Reached the case that failed so skip over it. *)
   | SkipCase :: Case (id, _, _) :: rest, _, _ -> Match id :: rest, values, envs
   (* Not reached case to skip so continue jumping. *)

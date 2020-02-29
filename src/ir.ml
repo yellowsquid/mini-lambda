@@ -73,8 +73,14 @@ type inst
    * Parameter is number of locals. *)
   | Case of int
   (* Pattern match an enum.
-   * Parameters are enum variant, parameter count and optional fail branch *)
+   * Parameters are enum variant, parameter count and optional fail branch. *)
   | PatternEnum of int * int * block option
+  (* Pattern match an int.
+   * Parameters are int value and optional fail branch. *)
+  | PatternInt of int * block option
+  (* Pattern match a bool.
+   * Parameters are bool value and optional fail branch. *)
+  | PatternBool of bool * int option
   (* Indicates end of pattern matching. Parameter is number of locals. *)
   | PatternEnd of int
   (* Pop value from the stack. Jump to first if true, and second if false. *)
@@ -126,6 +132,10 @@ let rec pp_inst ppf inst = match inst with
   | PatternEnum (variant, params, None) -> Format.fprintf ppf "PatternEnum(%d, %d)" variant params
   | PatternEnum (variant, params, Some block) ->
      Format.fprintf ppf "PatternEnum(%d, %d, %d)" variant params block
+  | PatternInt (i, None) -> Format.fprintf ppf "PatternInt(%d)" i
+  | PatternInt (i, Some block) -> Format.fprintf ppf "PatternInt(%d, %d)" i block
+  | PatternBool (b, None) -> Format.fprintf ppf "PatternBool(%B)" b
+  | PatternBool (b, Some block) -> Format.fprintf ppf "PatternBool(%B, %d)" b block
   | PatternEnd depth -> Format.fprintf ppf "PatternEnd(%d)" depth
   | If (tblock, fblock) ->
      Format.fprintf ppf "If(%d, %d)" tblock fblock

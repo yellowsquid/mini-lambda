@@ -44,8 +44,8 @@ rule token = parse
   | "break" { BREAK }
   | "return" { RETURN }
   | "<-" { BIND }
-  | "true" { TRUE }
-  | "false" { FALSE }
+  | "true" { BOOL true }
+  | "false" { BOOL false }
   | ['a'-'z'] ['a'-'z' 'A'-'Z' '_' '0'-'9']* {
       IDENT (Lexing.lexeme lexbuf)
     }
@@ -55,8 +55,8 @@ rule token = parse
   | ['A'-'Z'] ['a'-'z' 'A'-'Z']* {
       TYPE (Lexing.lexeme lexbuf)
     }
-  | ['0' - '9']+ as str { INT(int_of_string str) }
+  | ['0' - '9']+ as str { INT (int_of_string str) }
   | _ as c {
     let { pos_lnum; pos_cnum; pos_bol; _} = Lexing.lexeme_start_p lexbuf in
-    raise (Error(pos_lnum, pos_cnum - pos_bol + 1, c))
+    raise (Error (pos_lnum, pos_cnum - pos_bol + 1, c))
   }

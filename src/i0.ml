@@ -116,12 +116,6 @@ and eval_lambda env params captures body  =
   eval
 
 let rec pattern_matches env v pattern = match v, pattern with
-  | Enum (var, params), Typed_ast.Enum (_, variant, patterns) when var = variant ->
-     List.fold_left2 (fun (matched, env') v pattern ->
-         if matched
-         then pattern_matches env' v pattern
-         else false, env') (true, env) (Array.to_list params) patterns
-  | _, Enum _ -> false, env
   | x, Variable (_, id) ->
      let binds = Array.copy env.binds in
      binds.(id) <- x;
@@ -132,6 +126,18 @@ let rec pattern_matches env v pattern = match v, pattern with
                 ; debug = env.debug
                 } in
      true, env'
+  | Enum (var, params), Enum (_, variant, patterns) when var = variant ->
+     List.fold_left2 (fun (matched, env') v pattern ->
+         if matched
+         then pattern_matches env' v pattern
+         else false, env') (true, env) (Array.to_list params) patterns
+  | Enum _, Enum _ -> false, env
+  | _, Enum _ -> failwith "typechecker failed with pattern matching"
+  | _, Ignore _ -> true, env
+  | Int i, Int (_, j) -> i = j, env
+  | _, Int _ -> failwith "typechecker failed with pattern matching"
+  | Bool b, Bool (_, b') -> b = b', env
+  | _, Bool _ -> failwith "typechecker failed with pattern matching"
 
 let rec interpret_stmt env stmt =
   if env.debug then begin

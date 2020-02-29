@@ -131,9 +131,6 @@ let rec eval_pattern env v pattern cnt =
      Format.printf "@ <~>@ %s@]" (value_to_string v);
      Format.print_newline ());
   match v, pattern with
-  | Enum (var, params), Typed_ast.Enum (_, variant, patterns) when var = variant ->
-     fold_left_cnt eval_patterns (true, env) (List.combine params patterns) cnt
-  | _, Enum _ -> cnt (false, env)
   | x, Variable (_, id) ->
      let binds = Array.copy env.binds in
      binds.(id) <- x;
@@ -144,6 +141,15 @@ let rec eval_pattern env v pattern cnt =
                 ; debug = env.debug
                 } in
      cnt (true, env')
+  | Enum (var, params), Enum (_, variant, patterns) when var = variant ->
+     fold_left_cnt eval_patterns (true, env) (List.combine params patterns) cnt
+  | Enum _, Enum _ -> cnt (false, env)
+  | _, Enum _ -> failwith "typechecker failed with pattern matching"
+  | _, Ignore _ -> cnt (true, env)
+  | Int i, Int (_, j) -> cnt (i = j, env)
+  | _, Int _ -> failwith "typechecker failed with pattern matching"
+  | Bool b, Bool (_, b') -> cnt (b = b', env)
+  | _, Bool _ -> failwith "typechecker failed with pattern matching"
 and eval_patterns escape (_, env) (v, pattern) cnt =
   eval_pattern env v pattern (fun ((matched, _) as ret) -> if matched then cnt ret else escape ret)
 
