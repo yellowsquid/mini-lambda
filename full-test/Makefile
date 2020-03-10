@@ -13,8 +13,8 @@ all: $(SUPERCASES)
 .PHONY: all clean
 
 clean:
-	-rm $(SUPERCASES)
-	-rm $(foreach suffix,test.S test.exe,$(addsuffix /$(suffix),$(TARGETS)))
+	rm -f $(wildcard $(SUPERCASES))
+	rm -f $(wildcard $(foreach suffix,test.S test.exe,$(addsuffix $(suffix),$(dir $(CASES)))))
 
 $(addsuffix /test.S,$(TARGETS)): %/test.S: %/test.lambda $(LAMBDA)
 	$(LAMBDA) $< -o $@ || (rm $@ && false)

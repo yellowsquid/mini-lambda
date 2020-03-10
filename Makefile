@@ -62,12 +62,14 @@ promote: $(OUT)
 
 accept-corrections: promote
 
-clean: $(OUT)
-	-dune clean
+clean:
+	dune clean
+	opam clean
 	-rm -rf _build
 	$(MAKE) -C full-test clean
 
-distclean: clean
+fullclean: clean
+	opam switch remove -y .
 	-rm -f src/dune/setup.ml
 
 doc:
